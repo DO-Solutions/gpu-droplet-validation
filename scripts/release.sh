@@ -34,11 +34,6 @@ IMAGES=(
   "teardown-test:containers/teardown-test/Dockerfile"
 )
 
-# family -> compose file relative to repo root
-FAMILIES=(
-  "test:compose.test.yaml"
-)
-
 VERSION=""
 DRY_RUN=0
 while [ $# -gt 0 ]; do
@@ -95,57 +90,56 @@ for spec in "${IMAGES[@]}"; do
     '$REPO_ROOT'"
 done
 
-# ---------- 3. Package family tarballs ----------
+# ---------- 3. Package unified tarball ----------
 DIST_DIR="$REPO_ROOT/dist"
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
-for entry in "${FAMILIES[@]}"; do
-  family="${entry%%:*}"
-  compose="${entry#*:}"
-  [ -f "$compose" ] || { echo "missing compose file: $compose" >&2; exit 1; }
+shopt -s nullglob
+compose_files=( "$REPO_ROOT"/compose.*.yaml )
+shopt -u nullglob
+[ "${#compose_files[@]}" -gt 0 ] || { echo "no compose.*.yaml files found at repo root" >&2; exit 1; }
 
-  staging="$(mktemp -d)"
-  trap 'rm -rf "$staging"' EXIT
-  cp "$REPO_ROOT/run.sh" "$staging/run.sh"
+staging="$(mktemp -d)"
+trap 'rm -rf "$staging"' EXIT
+cp "$REPO_ROOT/run.sh" "$staging/run.sh"
+for compose in "${compose_files[@]}"; do
   cp "$compose" "$staging/$(basename "$compose")"
-  printf '%s\n' "$VERSION" > "$staging/VERSION"
-  chmod +x "$staging/run.sh"
-
-  versioned_tarball="$DIST_DIR/gpu-droplet-validation-$family-$VERSION.tgz"
-  latest_tarball="$DIST_DIR/gpu-droplet-validation-$family-latest.tgz"
-
-  log "pack: $versioned_tarball"
-  tar czf "$versioned_tarball" -C "$staging" .
-  cp "$versioned_tarball" "$latest_tarball"
-  rm -rf "$staging"
-  trap - EXIT
 done
+printf '%s\n' "$VERSION" > "$staging/VERSION"
+chmod +x "$staging/run.sh"
+
+versioned_tarball="$DIST_DIR/gpu-droplet-validation-$VERSION.tgz"
+latest_tarball="$DIST_DIR/gpu-droplet-validation-latest.tgz"
+
+log "pack: $versioned_tarball (compose files: ${#compose_files[@]})"
+tar czf "$versioned_tarball" -C "$staging" .
+cp "$versioned_tarball" "$latest_tarball"
+rm -rf "$staging"
+trap - EXIT
 
 log "dist contents:"
 ls -la "$DIST_DIR" >&2
 
 # ---------- 4. Immutable versioned release ----------
-versioned_assets=( "$DIST_DIR"/gpu-droplet-validation-*-"$VERSION".tgz )
-log "gh release create $VERSION with ${#versioned_assets[@]} asset(s)"
+log "gh release create $VERSION"
 run "gh release create '$VERSION' \
   --repo '$GH_SLUG' \
   --title '$VERSION' \
-  --notes 'Automated release $VERSION — all containers and family tarballs built together.' \
-  ${versioned_assets[*]}"
+  --notes 'Automated release $VERSION — all containers and the unified tarball built together.' \
+  '$versioned_tarball'"
 
 # ---------- 5. Rolling 'latest' release ----------
 # GitHub does not allow re-uploading assets to an existing release under the
 # same name without --clobber, and the latest tag itself needs to move. The
 # simplest durable pattern is to delete+recreate the 'latest' release each
 # time.
-latest_assets=( "$DIST_DIR"/gpu-droplet-validation-*-latest.tgz )
-log "refreshing 'latest' release with ${#latest_assets[@]} asset(s)"
+log "refreshing 'latest' release"
 run "gh release delete latest --repo '$GH_SLUG' --cleanup-tag -y || true"
 run "gh release create latest \
   --repo '$GH_SLUG' \
   --title 'latest' \
   --notes 'Rolling latest ($VERSION). Prefer versioned releases for pinning.' \
-  ${latest_assets[*]}"
+  '$latest_tarball'"
 
 log "done: $VERSION"

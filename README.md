@@ -15,21 +15,23 @@ Real `nvidia` and `amd` suites are not yet implemented.
 ## Bootstrap (cloud-init / Auto-ahoy / manual)
 
 ```bash
-FAMILY=test
 mkdir -p /tmp/gpu-droplet-validation
 curl -fsSL \
-  "https://github.com/DO-Solutions/gpu-droplet-validation/releases/latest/download/gpu-droplet-validation-${FAMILY}-latest.tgz" \
+  "https://github.com/DO-Solutions/gpu-droplet-validation/releases/latest/download/gpu-droplet-validation-latest.tgz" \
   | tar -xz -C /tmp/gpu-droplet-validation
 sudo /tmp/gpu-droplet-validation/run.sh \
-  --gpu-model "$FAMILY" \
+  --gpu-model test \
   --gpu-count 8 \
   --node-id   my-droplet \
   --region    mkc1 \
   --run-id    pass-001
 ```
 
+The tarball ships `run.sh` plus every `compose.*.yaml`; `run.sh` selects the
+right compose stack from `--gpu-model`.
+
 To pin to a specific release, replace `latest/download` with
-`download/v1.YYYYMMDD.HHMMSS` and the `-latest.tgz` suffix with
+`download/v1.YYYYMMDD.HHMMSS` and `-latest.tgz` with
 `-v1.YYYYMMDD.HHMMSS.tgz`.
 
 `run.sh` installs Docker + compose plugin if missing (idempotent), exports
@@ -54,7 +56,7 @@ Anything else is treated as `pass-*`.
 
 ## Layout
 
-- `run.sh` — entrypoint, shipped inside each family tarball.
+- `run.sh` — entrypoint, shipped inside the release tarball.
 - `compose.<family>.yaml` — compose stack per family. Image tags use
   `${VERSION:-latest}` so the pinned version from the tarball is used when
   available and `latest` otherwise.
@@ -62,8 +64,9 @@ Anything else is treated as `pass-*`.
 - `containers/tap-reporter/` — shared, vendor-agnostic TAP v14 reporter.
 - `containers/_lib/result.sh` — shell helpers (`log`, `die`,
   `write_result_json`) sourced by each entrypoint.
-- `scripts/release.sh` — builds + pushes every image and packages every
-  family tarball under one version tag, publishes to GitHub Releases.
+- `scripts/release.sh` — builds + pushes every image and packages a single
+  unified tarball (`run.sh` + all `compose.*.yaml` + `VERSION`) under one
+  version tag, publishes to GitHub Releases.
 
 Images are published to `ghcr.io/do-solutions/gpu-droplet-validation/<name>`
 with both `:$VERSION` and `:latest` tags on every release.
@@ -81,7 +84,7 @@ scripts/release.sh --dry-run
 scripts/release.sh --version v1.20260424.120000
 ```
 
-One release builds and publishes every container and every family tarball
-together; there is no partial per-family release.
+One release builds and publishes every container and a single unified
+tarball together; there is no partial per-family release.
 
      
