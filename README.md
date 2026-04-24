@@ -16,11 +16,10 @@ Real `nvidia` and `amd` suites are not yet implemented.
 ## Bootstrap (cloud-init / Auto-ahoy / manual)
 
 ```bash
-mkdir -p /tmp/gpu-droplet-validation
 curl -fsSL \
   "https://github.com/DO-Solutions/gpu-droplet-validation/releases/latest/download/gpu-droplet-validation-latest.tgz" \
-  | tar -xz -C /tmp/gpu-droplet-validation
-sudo /tmp/gpu-droplet-validation/run.sh \
+  | tar -xz
+sudo ./run.sh \
   --gpu-model test \
   --gpu-count 8 \
   --node-id   my-droplet \
