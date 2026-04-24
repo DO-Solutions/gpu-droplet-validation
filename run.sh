@@ -162,11 +162,12 @@ export RUN_ID GPU_MODEL GPU_COUNT NODE_ID REGION RESULTS_DIR
 
 log "docker compose up (run-id=$RUN_ID gpu-model=$GPU_MODEL results-dir=$RESULTS_DIR compose=$COMPOSE_FILE)"
 compose_rc=0
-# --abort-on-container-exit makes a prereqs failure stop the whole stack
-# quickly; without it compose waits on the (never-running) downstream
-# services indefinitely.
+# Services are serialized via depends_on/service_completed_successfully, so
+# an upstream failure already prevents downstream containers from starting
+# — no need for --abort-on-container-exit (which prints a confusing
+# "Aborting on container exit..." banner even on a clean run).
 docker compose -f "$COMPOSE_FILE" up \
-  --abort-on-container-exit --pull=always \
+  --pull=always \
   >&2 || compose_rc=$?
 # Regardless of compose_rc, remove stopped containers so repeat runs are clean.
 docker compose -f "$COMPOSE_FILE" down --remove-orphans >/dev/null 2>&1 || true
