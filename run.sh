@@ -6,9 +6,11 @@
 # compose stack for the selected --gpu-model, and forwards TAP v14 to stdout.
 #
 # Contract:
-#   stdout  -> TAP v14 from the tap-reporter container (only on a real run)
-#   stderr  -> descriptive error message if the suite cannot run
-#   /results -> JSON per suite, debug artifacts, metadata.json, output.tap
+#   stdout       -> TAP v14 from the tap-reporter container (only on a real run)
+#   stderr       -> descriptive error message if the suite cannot run
+#   results dir  -> JSON per suite, debug artifacts, metadata.json, output.tap
+#                   (defaults to ./results relative to the caller's pwd,
+#                   override with --results-dir)
 #
 # Exit codes:
 #   0     suite ran and produced TAP (pass or fail — signal is in TAP stream)
@@ -16,7 +18,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RESULTS_DIR="/results"
+RESULTS_DIR=""
 
 GPU_MODEL=""
 GPU_COUNT=""
@@ -29,26 +31,30 @@ die() { printf '%s\n' "$*" >&2; exit 1; }
 
 usage() {
   cat >&2 <<'EOF'
-Usage: run.sh --gpu-model <model> --gpu-count <n> [--node-id <id>] [--region <r>] [--run-id <id>]
+Usage: run.sh --gpu-model <model> --gpu-count <n> [--node-id <id>] [--region <r>] [--run-id <id>] [--results-dir <path>]
 EOF
 }
 
 # ---------- 1. Parse flags ----------
 while [ $# -gt 0 ]; do
   case "$1" in
-    --gpu-model) GPU_MODEL="$2"; shift 2 ;;
-    --gpu-count) GPU_COUNT="$2"; shift 2 ;;
-    --node-id)   NODE_ID="$2";   shift 2 ;;
-    --region)    REGION="$2";    shift 2 ;;
-    --run-id)    RUN_ID="$2";    shift 2 ;;
-    -h|--help)   usage; exit 0 ;;
-    *)           usage; die "unknown flag: $1" ;;
+    --gpu-model)   GPU_MODEL="$2";    shift 2 ;;
+    --gpu-count)   GPU_COUNT="$2";    shift 2 ;;
+    --node-id)     NODE_ID="$2";      shift 2 ;;
+    --region)      REGION="$2";       shift 2 ;;
+    --run-id)      RUN_ID="$2";       shift 2 ;;
+    --results-dir) RESULTS_DIR="$2";  shift 2 ;;
+    -h|--help)     usage; exit 0 ;;
+    *)             usage; die "unknown flag: $1" ;;
   esac
 done
 
 [ -n "$GPU_MODEL" ] || { usage; die "--gpu-model is required"; }
 [ -n "$GPU_COUNT" ] || { usage; die "--gpu-count is required"; }
 [ -n "$RUN_ID" ] || RUN_ID="auto-$(date -u +%Y%m%dT%H%M%SZ)"
+[ -n "$RESULTS_DIR" ] || RESULTS_DIR="$PWD/results"
+# Docker bind mounts require absolute paths; resolve before creating.
+case "$RESULTS_DIR" in /*) ;; *) RESULTS_DIR="$PWD/$RESULTS_DIR" ;; esac
 
 # ---------- 2. Idempotent prerequisites ----------
 need_root() {
@@ -127,7 +133,7 @@ else
   log "no VERSION file next to run.sh — compose will resolve images as :latest"
 fi
 
-# ---------- 4. Prepare /results and metadata.json ----------
+# ---------- 4. Prepare results dir and metadata.json ----------
 mkdir -p "$RESULTS_DIR"
 chmod 0777 "$RESULTS_DIR"  # containers run as their own uid; simplest for a PoC.
 rm -f "$RESULTS_DIR/output.tap" "$RESULTS_DIR/tap_exit"
@@ -150,10 +156,11 @@ jq -n \
 
 # ---------- 5. Run the compose stack ----------
 # Export env the compose file consumes. RUN_ID drives in-container scenario
-# dispatch for the test flow.
-export RUN_ID GPU_MODEL GPU_COUNT NODE_ID REGION
+# dispatch for the test flow. RESULTS_DIR is the host-side bind-mount path
+# (containers still see it as /results internally).
+export RUN_ID GPU_MODEL GPU_COUNT NODE_ID REGION RESULTS_DIR
 
-log "docker compose up (run-id=$RUN_ID gpu-model=$GPU_MODEL compose=$COMPOSE_FILE)"
+log "docker compose up (run-id=$RUN_ID gpu-model=$GPU_MODEL results-dir=$RESULTS_DIR compose=$COMPOSE_FILE)"
 compose_rc=0
 # --abort-on-container-exit makes a prereqs failure stop the whole stack
 # quickly; without it compose waits on the (never-running) downstream

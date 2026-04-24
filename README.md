@@ -2,7 +2,8 @@
 
 Entrypoint + container stack for the GPU droplet validation PoC. Cloud-init
 (or a human) extracts a release tarball onto a Droplet, runs `run.sh`, and
-gets TAP v14 on stdout plus artifacts in `/results`.
+gets TAP v14 on stdout plus artifacts in `./results` (override with
+`--results-dir <path>`).
 
 ## Families
 

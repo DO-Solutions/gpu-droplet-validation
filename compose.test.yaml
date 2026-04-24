@@ -1,11 +1,15 @@
 # Mock validation stack for --gpu-model test.
-# Services run serially via depends_on and share a /results bind mount.
+# Services run serially via depends_on and share a results bind mount.
 # Dispatch by RUN_ID prefix lives inside the individual container scripts;
 # the compose file itself is identical for every scenario.
 #
 # Image tags resolve from $VERSION (set by run.sh from the tarball's VERSION
 # file). Falls back to :latest when extracted without a VERSION file — useful
 # for local dev.
+#
+# The host-side results path comes from $RESULTS_DIR (exported by run.sh,
+# defaults to ./results for bare `docker compose up` invocations). Containers
+# always see it mounted at /results internally.
 
 services:
   prereqs:
@@ -14,7 +18,7 @@ services:
     environment:
       RUN_ID: ${RUN_ID:-}
     volumes:
-      - /results:/results
+      - ${RESULTS_DIR:-./results}:/results
 
   setup:
     image: ghcr.io/do-solutions/gpu-droplet-validation/setup-test:${VERSION:-latest}
@@ -22,7 +26,7 @@ services:
     environment:
       RUN_ID: ${RUN_ID:-}
     volumes:
-      - /results:/results
+      - ${RESULTS_DIR:-./results}:/results
     depends_on:
       prereqs:
         condition: service_completed_successfully
@@ -33,7 +37,7 @@ services:
     environment:
       RUN_ID: ${RUN_ID:-}
     volumes:
-      - /results:/results
+      - ${RESULTS_DIR:-./results}:/results
     depends_on:
       setup:
         condition: service_completed_successfully
@@ -44,7 +48,7 @@ services:
     environment:
       RUN_ID: ${RUN_ID:-}
     volumes:
-      - /results:/results
+      - ${RESULTS_DIR:-./results}:/results
     # mock-test exits 0 in both pass and fail scenarios (failure is carried in
     # the JSON result, not the exit code), so service_completed_successfully
     # is the right condition here. If a future real test container starts
@@ -59,7 +63,7 @@ services:
     environment:
       RUN_ID: ${RUN_ID:-}
     volumes:
-      - /results:/results
+      - ${RESULTS_DIR:-./results}:/results
     depends_on:
       teardown:
         condition: service_completed_successfully
