@@ -185,5 +185,5 @@ if [ -s "$RESULTS_DIR/output.tap" ]; then
 fi
 
 # No TAP output means the suite could not run (prereqs / compose / pull failure).
-echo "validation suite failed to produce TAP output (docker compose exit=$compose_rc). See Droplet logs and /results for detail." >&2
+echo "validation suite failed to produce TAP output (docker compose exit=$compose_rc). See Droplet logs and ${RESULTS_DIR}/ for detail." >&2
 exit "${compose_rc:-1}"
