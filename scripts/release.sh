@@ -19,7 +19,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-REGISTRY="ghcr.io/do-solutions/droplet-validation"
+REGISTRY="ghcr.io/do-solutions/gpu-droplet-validation"
 GH_OWNER="DO-Solutions"
 GH_REPO="gpu-droplet-validation"
 GH_SLUG="$GH_OWNER/$GH_REPO"
@@ -28,19 +28,15 @@ GH_SLUG="$GH_OWNER/$GH_REPO"
 # Keep tap-reporter flat (vendor-agnostic); everything else <family>-<role>.
 IMAGES=(
   "tap-reporter:containers/tap-reporter/Dockerfile"
-  "test-prereqs:containers/test-prereqs/Dockerfile"
-  "test-setup:containers/test-setup/Dockerfile"
-  "test-mock:containers/test-mock/Dockerfile"
-  "test-teardown:containers/test-teardown/Dockerfile"
-  "nvidia-stub:containers/nvidia-stub/Dockerfile"
-  "amd-stub:containers/amd-stub/Dockerfile"
+  "prereqs-test:containers/prereqs-test/Dockerfile"
+  "setup-test:containers/setup-test/Dockerfile"
+  "mock-test:containers/mock-test/Dockerfile"
+  "teardown-test:containers/teardown-test/Dockerfile"
 )
 
 # family -> compose file relative to repo root
 FAMILIES=(
   "test:compose.test.yaml"
-  "nvidia:compose.nvidia.yaml"
-  "amd:compose.amd.yaml"
 )
 
 VERSION=""

@@ -112,10 +112,8 @@ ensure_docker_running
 
 # ---------- 3. Select compose file (sibling of this script) ----------
 case "$GPU_MODEL" in
-  test)   COMPOSE_FILE="$SCRIPT_DIR/compose.test.yaml" ;;
-  nvidia) COMPOSE_FILE="$SCRIPT_DIR/compose.nvidia.yaml" ;;
-  amd)    COMPOSE_FILE="$SCRIPT_DIR/compose.amd.yaml" ;;
-  *)      die "unsupported --gpu-model value: $GPU_MODEL" ;;
+  test) COMPOSE_FILE="$SCRIPT_DIR/compose.test.yaml" ;;
+  *)    die "unsupported --gpu-model value: $GPU_MODEL" ;;
 esac
 [ -f "$COMPOSE_FILE" ] || die "compose file not found: $COMPOSE_FILE"
 

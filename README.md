@@ -9,16 +9,13 @@ gets TAP v14 on stdout plus artifacts in `/results`.
 | `--gpu-model` | Status                                                     |
 | ------------- | ---------------------------------------------------------- |
 | `test`        | Mock CPU-only stack used for integration testing           |
-| `nvidia`      | Stub — prints "not implemented" and exits non-zero         |
-| `amd`         | Stub — prints "not implemented" and exits non-zero         |
 
-Real `nvidia` and `amd` suites are not yet implemented; the stubs exist so
-the release machinery builds all three families uniformly.
+Real `nvidia` and `amd` suites are not yet implemented.
 
 ## Bootstrap (cloud-init / Auto-ahoy / manual)
 
 ```bash
-FAMILY=test   # or nvidia / amd
+FAMILY=test
 mkdir -p /tmp/gpu-droplet-validation
 curl -fsSL \
   "https://github.com/DO-Solutions/gpu-droplet-validation/releases/latest/download/gpu-droplet-validation-${FAMILY}-latest.tgz" \
@@ -61,14 +58,14 @@ Anything else is treated as `pass-*`.
 - `compose.<family>.yaml` — compose stack per family. Image tags use
   `${VERSION:-latest}` so the pinned version from the tarball is used when
   available and `latest` otherwise.
-- `containers/<family>-<role>/` — per-family container image sources.
+- `containers/<role>-<family>/` — per-family container image sources.
 - `containers/tap-reporter/` — shared, vendor-agnostic TAP v14 reporter.
 - `containers/_lib/result.sh` — shell helpers (`log`, `die`,
   `write_result_json`) sourced by each entrypoint.
 - `scripts/release.sh` — builds + pushes every image and packages every
   family tarball under one version tag, publishes to GitHub Releases.
 
-Images are published to `ghcr.io/do-solutions/droplet-validation/<name>`
+Images are published to `ghcr.io/do-solutions/gpu-droplet-validation/<name>`
 with both `:$VERSION` and `:latest` tags on every release.
 
 ## Releasing
@@ -87,7 +84,4 @@ scripts/release.sh --version v1.20260424.120000
 One release builds and publishes every container and every family tarball
 together; there is no partial per-family release.
 
-GHCR packages are created as **private** by default. Flip each to public via
-the GHCR web UI (`…/packages/container/...` → Package settings → Change
-visibility). Needed once per package, then the bootstrap `curl` works
-unauthenticated.
+     
