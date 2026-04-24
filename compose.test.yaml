@@ -1,0 +1,65 @@
+# Mock validation stack for --gpu-model test.
+# Services run serially via depends_on and share a /results bind mount.
+# Dispatch by RUN_ID prefix lives inside the individual container scripts;
+# the compose file itself is identical for every scenario.
+#
+# Image tags resolve from $VERSION (set by run.sh from the tarball's VERSION
+# file). Falls back to :latest when extracted without a VERSION file — useful
+# for local dev.
+
+services:
+  prereqs:
+    image: ghcr.io/do-solutions/droplet-validation/test-prereqs:${VERSION:-latest}
+    container_name: dv-prereqs
+    environment:
+      RUN_ID: ${RUN_ID:-}
+    volumes:
+      - /results:/results
+
+  setup:
+    image: ghcr.io/do-solutions/droplet-validation/test-setup:${VERSION:-latest}
+    container_name: dv-setup
+    environment:
+      RUN_ID: ${RUN_ID:-}
+    volumes:
+      - /results:/results
+    depends_on:
+      prereqs:
+        condition: service_completed_successfully
+
+  mock-test:
+    image: ghcr.io/do-solutions/droplet-validation/test-mock:${VERSION:-latest}
+    container_name: dv-mock-test
+    environment:
+      RUN_ID: ${RUN_ID:-}
+    volumes:
+      - /results:/results
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
+  teardown:
+    image: ghcr.io/do-solutions/droplet-validation/test-teardown:${VERSION:-latest}
+    container_name: dv-teardown
+    environment:
+      RUN_ID: ${RUN_ID:-}
+    volumes:
+      - /results:/results
+    # mock-test exits 0 in both pass and fail scenarios (failure is carried in
+    # the JSON result, not the exit code), so service_completed_successfully
+    # is the right condition here. If a future real test container starts
+    # using exit code to signal failure, this will need revisiting.
+    depends_on:
+      mock-test:
+        condition: service_completed_successfully
+
+  tap-reporter:
+    image: ghcr.io/do-solutions/droplet-validation/tap-reporter:${VERSION:-latest}
+    container_name: dv-tap-reporter
+    environment:
+      RUN_ID: ${RUN_ID:-}
+    volumes:
+      - /results:/results
+    depends_on:
+      teardown:
+        condition: service_completed_successfully
