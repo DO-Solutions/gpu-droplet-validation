@@ -38,6 +38,12 @@ To pin to a specific release, replace `latest/download` with
 `VERSION` from the tarball's `VERSION` file so compose resolves pinned image
 tags, runs the stack, and forwards TAP to stdout. Errors go to stderr.
 
+Artifacts (per-suite JSON, debug output, `metadata.json`, `output.tap`) land
+in `./results` by default — that is, `results/` relative to the caller's
+working directory. Pass `--results-dir <path>` to redirect; relative paths
+are resolved against the caller's pwd. Containers always see it mounted as
+`/results` internally, so the same override flows through compose.
+
 ## Test-family run-id dispatch
 
 For `--gpu-model test`, the prefix of `--run-id` selects the scenario:
