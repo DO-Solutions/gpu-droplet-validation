@@ -36,27 +36,45 @@ To pin to a specific release, replace `latest/download` with
 
 `run.sh` installs Docker + compose plugin if missing (idempotent), exports
 `VERSION` from the tarball's `VERSION` file so compose resolves pinned image
-tags, runs the stack, and forwards TAP to stdout. Errors go to stderr.
+tags, runs the stack, and forwards TAP to stdout.
 
-Artifacts (per-suite JSON, debug output, `metadata.json`, `output.tap`) land
-in `./results` by default — that is, `results/` relative to the caller's
-working directory. Pass `--results-dir <path>` to redirect; relative paths
-are resolved against the caller's pwd. Containers always see it mounted as
-`/results` internally, so the same override flows through compose.
+### stdout / stderr / exit-code contract
+
+- **stdout**: TAP v14 from the tap-reporter, only when the suite ran. If the
+  TAP stream contains any `not ok` test points, at least one hardware check
+  did not pass. Empty stdout means the suite did not run at all.
+- **stderr**: silent on a successful or failed run. A single error line is
+  written **only** when the suite could not run at all (missing prereqs,
+  Docker / compose / image-pull failure, bad flags). Any stderr output is
+  the signal that the environment is broken; the pass/fail determination
+  from stdout is irrelevant in that case.
+- **Exit codes**:
+  - `0` — suite ran and every TAP test point was `ok`.
+  - `1` — suite ran and at least one TAP test point was `not ok`.
+  - `255` — suite could not run.
+
+Diagnostic chatter (apt installs, Docker setup, full `docker compose up`
+output) is written to `run.log` inside the results dir, never to stderr.
+
+Artifacts (per-suite JSON, debug output, `metadata.json`, `output.tap`,
+`tap_exit`, `run.log`) land in `./results` by default — that is, `results/`
+relative to the caller's working directory. Pass `--results-dir <path>` to
+redirect; relative paths are resolved against the caller's pwd. Containers
+always see it mounted as `/results` internally, so the same override flows
+through compose.
 
 ## Test-family run-id dispatch
 
 For `--gpu-model test`, the prefix of `--run-id` selects the scenario:
 
-| Prefix    | Behavior                                                                      |
-| --------- | ----------------------------------------------------------------------------- |
-| `pass-*`  | TAP v14 with all test points `ok`. Exit 0.                                    |
-| `fail-*`  | TAP v14 with at least one `not ok` and a YAML diagnostic. Exit 0.             |
-| `error-*` | Prereqs container exits non-zero, no TAP. Script writes stderr. Exit non-0.   |
+| Prefix    | Behavior                                                                    |
+| --------- | --------------------------------------------------------------------------- |
+| `pass-*`  | TAP v14 with all test points `ok`. Exit 0.                                  |
+| `fail-*`  | TAP v14 with at least one `not ok` and a YAML diagnostic. Exit 1.           |
+| `error-*` | Prereqs container exits non-zero, no TAP. Script writes stderr. Exit 255.  |
 
-The pass/fail signal for individual tests lives in the TAP stream; `run.sh`
-exits 0 whenever the suite produced TAP output. Non-zero exit is reserved
-for "the suite could not run at all."
+Exit code is derived from `tap_exit` (written by the tap-reporter) when TAP
+was produced; `255` is reserved for "the suite could not run at all."
 
 Anything else is treated as `pass-*`.
 
