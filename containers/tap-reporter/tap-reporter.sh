@@ -17,8 +17,11 @@
 # "# Subtest:" headers, no indented "1..N" sub-plans, and no per-suite
 # roll-up "ok N - <suite>" lines. Downstream integrators do not parse
 # TAP v14 subtests, so every test point must appear at the top level.
-# Suite grouping is preserved via a "# suite: <name>" comment line and
-# by pipe-delimiting each test name as "<suite> | <test name>".
+# Suite grouping is preserved by pipe-delimiting each test name as
+# "<suite> | <test name>". Do NOT add free-form "#" comment lines as
+# section markers either: in TAP 13/14, a bare "#" line is a diagnostic
+# attached to the preceding test point, so a "# suite: foo" header
+# would silently attach to the previous test's diagnostics.
 set -euo pipefail
 
 RESULTS_DIR="/results"
@@ -75,8 +78,6 @@ for f in "${present[@]}"; do
 
   suite="$(jq -r '.suite' "$path")"
   tcount="$(jq '.tests | length' "$path")"
-
-  emit "# suite: $suite"
 
   for i in $(seq 0 $((tcount - 1))); do
     t_ok=$(jq -r ".tests[$i].ok" "$path")
