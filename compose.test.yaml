@@ -1,7 +1,7 @@
-# Mock validation stack for --gpu-model test.
-# Services run serially via depends_on and share a results bind mount.
-# Dispatch by RUN_ID prefix lives inside the individual container scripts;
-# the compose file itself is identical for every scenario.
+# Mock validation stack shared by --gpu-model test-pass / test-fail /
+# test-error. Services run serially via depends_on and share a results bind
+# mount. Scenario dispatch is driven by $SCENARIO (derived in run.sh from
+# --gpu-model) so callers never need to encode the scenario into --run-id.
 #
 # Image tags resolve from $VERSION (set by run.sh from the tarball's VERSION
 # file). Falls back to :latest when extracted without a VERSION file — useful
@@ -17,6 +17,7 @@ services:
     container_name: dv-prereqs
     environment:
       RUN_ID: ${RUN_ID:-}
+      SCENARIO: ${SCENARIO:-}
     volumes:
       - ${RESULTS_DIR:-./results}:/results
 
@@ -25,6 +26,7 @@ services:
     container_name: dv-setup
     environment:
       RUN_ID: ${RUN_ID:-}
+      SCENARIO: ${SCENARIO:-}
     volumes:
       - ${RESULTS_DIR:-./results}:/results
     depends_on:
@@ -36,6 +38,7 @@ services:
     container_name: dv-mock-test
     environment:
       RUN_ID: ${RUN_ID:-}
+      SCENARIO: ${SCENARIO:-}
     volumes:
       - ${RESULTS_DIR:-./results}:/results
     depends_on:
@@ -47,6 +50,7 @@ services:
     container_name: dv-teardown
     environment:
       RUN_ID: ${RUN_ID:-}
+      SCENARIO: ${SCENARIO:-}
     volumes:
       - ${RESULTS_DIR:-./results}:/results
     # mock-test exits 0 in both pass and fail scenarios (failure is carried in
@@ -62,6 +66,7 @@ services:
     container_name: dv-tap-reporter
     environment:
       RUN_ID: ${RUN_ID:-}
+      SCENARIO: ${SCENARIO:-}
     volumes:
       - ${RESULTS_DIR:-./results}:/results
     depends_on:

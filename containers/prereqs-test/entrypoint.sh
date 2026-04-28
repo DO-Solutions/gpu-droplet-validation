@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Mock prereqs container for --gpu-model test.
-# On RUN_ID=error-* it exits non-zero (no /results/prereqs.json), which halts
+# Mock prereqs container for the test family.
+# On SCENARIO=error it exits non-zero (no /results/prereqs.json), which halts
 # the rest of the compose stack via depends_on: service_completed_successfully.
 # Otherwise it writes a pass-shaped result JSON.
 SUITE=prereqs
 source /lib/result.sh
 
-case "${RUN_ID:-}" in
-  error-*)
-    die "mock environment failure (RUN_ID=$RUN_ID)"
+case "${SCENARIO:-}" in
+  error)
+    die "mock environment failure (SCENARIO=$SCENARIO RUN_ID=${RUN_ID:-<unset>})"
     ;;
 esac
 
@@ -21,4 +21,4 @@ write_result_json prereqs /results/prereqs.json '{
   ]
 }'
 
-log "ok (RUN_ID=${RUN_ID:-<unset>})"
+log "ok (SCENARIO=${SCENARIO:-<unset>} RUN_ID=${RUN_ID:-<unset>})"

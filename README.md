@@ -7,11 +7,19 @@ gets TAP v14 on stdout plus artifacts in `./results` (override with
 
 ## Families
 
-| `--gpu-model` | Status                                                     |
-| ------------- | ---------------------------------------------------------- |
-| `test`        | Mock CPU-only stack used for integration testing           |
+| `--gpu-model` | Status                                                                |
+| ------------- | --------------------------------------------------------------------- |
+| `test-pass`   | Mock CPU-only stack, all-pass scenario (integration testing)          |
+| `test-fail`   | Mock CPU-only stack, fail scenario (TAP `not ok` + diagnostic)        |
+| `test-error`  | Mock CPU-only stack, prereqs-error scenario (no TAP, exit 255)        |
 
 Real `nvidia` and `amd` suites are not yet implemented.
+
+The test family is split into three distinct `--gpu-model` values rather
+than a single `test` value with run-id-prefix dispatch. This keeps caller
+integration trivial — auto-ahoy and similar systems only have to pass a
+literal flag value, never parse a substring of `--run-id`. `--run-id`
+itself is treated purely as a free-form trace ID by all gpu-models.
 
 ## Bootstrap (cloud-init / Auto-ahoy / manual)
 
@@ -20,11 +28,11 @@ curl -fsSL \
   "https://github.com/DO-Solutions/gpu-droplet-validation/releases/latest/download/gpu-droplet-validation-latest.tgz" \
   | tar -xz
 sudo ./run.sh \
-  --gpu-model test \
+  --gpu-model test-pass \
   --gpu-count 8 \
   --node-id   my-droplet \
   --region    mkc1 \
-  --run-id    pass-001
+  --run-id    my-trace-001
 ```
 
 The tarball ships `run.sh` plus every `compose.*.yaml`; `run.sh` selects the
@@ -63,20 +71,20 @@ redirect; relative paths are resolved against the caller's pwd. Containers
 always see it mounted as `/results` internally, so the same override flows
 through compose.
 
-## Test-family run-id dispatch
+## Test-family scenario dispatch
 
-For `--gpu-model test`, the prefix of `--run-id` selects the scenario:
+The scenario is selected by the `--gpu-model` value itself — `--run-id` is
+not parsed by any container. Auto-ahoy (and any other caller) only needs to
+pass a literal `--gpu-model` value:
 
-| Prefix    | Behavior                                                                    |
-| --------- | --------------------------------------------------------------------------- |
-| `pass-*`  | TAP v14 with all test points `ok`. Exit 0.                                  |
-| `fail-*`  | TAP v14 with at least one `not ok` and a YAML diagnostic. Exit 1.           |
-| `error-*` | Prereqs container exits non-zero, no TAP. Script writes stderr. Exit 255.  |
+| `--gpu-model` | Behavior                                                                    |
+| ------------- | --------------------------------------------------------------------------- |
+| `test-pass`   | TAP v14 with all test points `ok`. Exit 0.                                  |
+| `test-fail`   | TAP v14 with at least one `not ok` and a YAML diagnostic. Exit 1.           |
+| `test-error`  | Prereqs container exits non-zero, no TAP. Script writes stderr. Exit 255.  |
 
 Exit code is derived from `tap_exit` (written by the tap-reporter) when TAP
 was produced; `255` is reserved for "the suite could not run at all."
-
-Anything else is treated as `pass-*`.
 
 ## Layout
 

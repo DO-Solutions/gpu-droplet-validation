@@ -69,9 +69,17 @@ case "$RESULTS_DIR" in /*) ;; *) RESULTS_DIR="$PWD/$RESULTS_DIR" ;; esac
 
 # Validate --gpu-model before creating any state on disk so a bad flag
 # doesn't leave behind a stray results dir.
+#
+# The test family ships three gpu-model values (test-pass / test-fail /
+# test-error) so callers like auto-ahoy can pick a scenario by passing a
+# literal flag value — no run-id-prefix parsing required. SCENARIO is
+# derived here and exported below for the container stack to dispatch on.
+SCENARIO=""
 case "$GPU_MODEL" in
-  test) COMPOSE_FILE="$SCRIPT_DIR/compose.test.yaml" ;;
-  *)    die "unsupported --gpu-model value: $GPU_MODEL" ;;
+  test-pass)  COMPOSE_FILE="$SCRIPT_DIR/compose.test.yaml"; SCENARIO="pass" ;;
+  test-fail)  COMPOSE_FILE="$SCRIPT_DIR/compose.test.yaml"; SCENARIO="fail" ;;
+  test-error) COMPOSE_FILE="$SCRIPT_DIR/compose.test.yaml"; SCENARIO="error" ;;
+  *)          die "unsupported --gpu-model value: $GPU_MODEL" ;;
 esac
 [ -f "$COMPOSE_FILE" ] || die "compose file not found: $COMPOSE_FILE"
 
@@ -183,12 +191,13 @@ jq -n \
   }' > "$RESULTS_DIR/metadata.json"
 
 # ---------- 5. Run the compose stack ----------
-# Export env the compose file consumes. RUN_ID drives in-container scenario
-# dispatch for the test flow. RESULTS_DIR is the host-side bind-mount path
-# (containers still see it as /results internally).
-export RUN_ID GPU_MODEL GPU_COUNT NODE_ID REGION RESULTS_DIR
+# Export env the compose file consumes. SCENARIO drives in-container scenario
+# dispatch for the test flow (derived from --gpu-model above). RUN_ID stays a
+# free-form trace ID. RESULTS_DIR is the host-side bind-mount path (containers
+# still see it as /results internally).
+export RUN_ID GPU_MODEL GPU_COUNT NODE_ID REGION RESULTS_DIR SCENARIO
 
-log "docker compose up (run-id=$RUN_ID gpu-model=$GPU_MODEL results-dir=$RESULTS_DIR compose=$COMPOSE_FILE)"
+log "docker compose up (run-id=$RUN_ID gpu-model=$GPU_MODEL scenario=$SCENARIO results-dir=$RESULTS_DIR compose=$COMPOSE_FILE)"
 compose_rc=0
 # Services are serialized via depends_on/service_completed_successfully, so
 # an upstream failure already prevents downstream containers from starting
