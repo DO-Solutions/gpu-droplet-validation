@@ -16,12 +16,12 @@ gets TAP v14 on stdout plus artifacts in `./results` (override with
 Real `nvidia` and `amd` suites are not yet implemented.
 
 The test family is split into three distinct `--gpu-model` values rather
-than a single `test` value with run-id-prefix dispatch. This keeps caller
-integration trivial — auto-ahoy and similar systems only have to pass a
-literal flag value, never parse a substring of `--run-id`. `--run-id`
-itself is treated purely as a free-form trace ID by all gpu-models.
+than a single `test` value with run-id-prefix dispatch. Callers select a
+scenario by passing a literal `--gpu-model` value — no substring parsing of
+`--run-id` is required. `--run-id` is treated purely as a free-form trace
+ID by all gpu-models.
 
-## Bootstrap (cloud-init / Auto-ahoy / manual)
+## Bootstrap
 
 ```bash
 curl -fsSL \
@@ -32,7 +32,7 @@ sudo ./run.sh \
   --gpu-count 8 \
   --node-id   my-droplet \
   --region    mkc1 \
-  --run-id    my-trace-001
+  --run-id    trace-001
 ```
 
 The tarball ships `run.sh` plus every `compose.*.yaml`; `run.sh` selects the
@@ -48,9 +48,15 @@ tags, runs the stack, and forwards TAP to stdout.
 
 ### stdout / stderr / exit-code contract
 
-- **stdout**: TAP v14 from the tap-reporter, only when the suite ran. If the
-  TAP stream contains any `not ok` test points, at least one hardware check
-  did not pass. Empty stdout means the suite did not run at all.
+- **stdout**: TAP v14 from the tap-reporter, only when the suite ran. The
+  output is a single flat plan — one top-level test point per check, with no
+  `# Subtest:` blocks or nested plans. Each description is suite-prefixed
+  (`<suite>: <name>`) so a downstream consumer can group results without
+  having to parse subtests. See
+  https://testanything.org/tap-version-14-specification.html for the
+  top-level grammar. If the TAP stream contains any `not ok` test points, at
+  least one hardware check did not pass. Empty stdout means the suite did
+  not run at all.
 - **stderr**: silent on a successful or failed run. A single error line is
   written **only** when the suite could not run at all (missing prereqs,
   Docker / compose / image-pull failure, bad flags). Any stderr output is
@@ -74,8 +80,8 @@ through compose.
 ## Test-family scenario dispatch
 
 The scenario is selected by the `--gpu-model` value itself — `--run-id` is
-not parsed by any container. Auto-ahoy (and any other caller) only needs to
-pass a literal `--gpu-model` value:
+not parsed by any container. Callers only need to pass a literal
+`--gpu-model` value:
 
 | `--gpu-model` | Behavior                                                                    |
 | ------------- | --------------------------------------------------------------------------- |

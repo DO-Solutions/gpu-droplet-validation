@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 # Shared TAP v14 reporter. Reusable across --gpu-model flows.
 #
-# Reads result JSON files from /results in a defined order and emits a TAP v14
-# document to both stdout and /results/output.tap. Writes the final exit code
-# to /results/tap_exit so the caller can reproduce the pass/fail signal after
-# the fact (run.sh reads this after compose exits).
+# Reads result JSON files from /results in a defined order and emits a flat
+# TAP v14 document (no subtests) to both stdout and /results/output.tap.
+# Writes the final exit code to /results/tap_exit so the caller can reproduce
+# the pass/fail signal after the fact (run.sh reads this after compose exits).
 #
-# Each file must conform to the Result File Format from Dev Spec §1:
+# Each result file must conform to the Result File Format from Dev Spec §1:
 #   { "suite": "<name>", "tests": [ { "ok": bool, "name": str,
 #       "diagnostic": null|object, "directive": null|string } ] }
+#
+# The output is intentionally a single, flat plan with one test point per
+# logical check — no `# Subtest:` blocks and no nested plans. Downstream
+# consumers therefore only need to parse the top-level TAP grammar from the
+# spec at https://testanything.org/tap-version-14-specification.html.
+# Suite identity is preserved by prefixing each description with the suite
+# name (`<suite>: <name>`).
 #
 # The read order encodes execution order and is easy to extend for the real
 # --gpu-model flows: just add the additional suite filenames.
@@ -25,13 +32,12 @@ SUITE_FILES=(
   "nvlink.json"
   "gemm-compute.json"
   "nccl-allreduce.json"
-  "nccl-alltoall.json"
   "p2p-bandwidth.json"
+  "nccl-alltoall.json"
   "mock-test.json"
   "post-health.json"
 )
 
-# Collect files that actually exist, preserving order.
 present=()
 for f in "${SUITE_FILES[@]}"; do
   [ -f "$RESULTS_DIR/$f" ] && present+=("$f")
@@ -51,59 +57,52 @@ emit() {
 
 : > "$OUT"
 
-top_count="${#present[@]}"
-emit "TAP version 14"
-emit "1..$top_count"
-
-overall_ok=1
-top_idx=0
+# ---------- 1. Total test point count across all suites ----------
+total=0
 for f in "${present[@]}"; do
-  top_idx=$((top_idx + 1))
-  path="$RESULTS_DIR/$f"
+  n=$(jq '.tests | length' "$RESULTS_DIR/$f")
+  total=$((total + n))
+done
 
+emit "TAP version 14"
+emit "1..$total"
+
+# ---------- 2. Flat emit: one test point per check, suite-prefixed ----------
+overall_ok=1
+point=0
+for f in "${present[@]}"; do
+  path="$RESULTS_DIR/$f"
   suite="$(jq -r '.suite' "$path")"
   tcount="$(jq '.tests | length' "$path")"
 
-  emit "# Subtest: $suite"
-  emit "    1..$tcount"
-
-  suite_ok=1
   for i in $(seq 0 $((tcount - 1))); do
     t_ok=$(jq -r ".tests[$i].ok" "$path")
     t_name=$(jq -r ".tests[$i].name" "$path")
     t_directive=$(jq -r ".tests[$i].directive // empty" "$path")
     t_has_diag=$(jq -r "(.tests[$i].diagnostic // null) | if . == null then \"0\" else \"1\" end" "$path")
 
-    point=$((i + 1))
+    point=$((point + 1))
     if [ "$t_ok" = "true" ]; then
       status="ok"
     else
       status="not ok"
-      suite_ok=0
       overall_ok=0
     fi
 
     if [ -n "$t_directive" ]; then
-      emit "    $status $point - $t_name # $t_directive"
+      emit "$status $point - $suite: $t_name # $t_directive"
     else
-      emit "    $status $point - $t_name"
+      emit "$status $point - $suite: $t_name"
     fi
 
     if [ "$t_has_diag" = "1" ]; then
-      emit "      ---"
-      # Dump diagnostic as key: value pairs. jq emits each line; indent to 6
-      # spaces to sit inside the subtest's 4-space indent as TAP YAML.
-      jq -r ".tests[$i].diagnostic | to_entries[] | \"      \(.key): \(.value | tojson)\"" "$path" \
+      # TAP v14 YAML block, indented 2 spaces at the top level.
+      emit "  ---"
+      jq -r ".tests[$i].diagnostic | to_entries[] | \"  \(.key): \(.value | tojson)\"" "$path" \
         | tee -a "$OUT"
-      emit "      ..."
+      emit "  ..."
     fi
   done
-
-  if [ "$suite_ok" = "1" ]; then
-    emit "ok $top_idx - $suite"
-  else
-    emit "not ok $top_idx - $suite"
-  fi
 done
 
 # tap_exit is written for traceability (did any test point report not ok?)
