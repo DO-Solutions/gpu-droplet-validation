@@ -28,11 +28,11 @@ curl -fsSL \
   "https://github.com/DO-Solutions/gpu-droplet-validation/releases/latest/download/gpu-droplet-validation-latest.tgz" \
   | tar -xz
 sudo ./run.sh \
-  --gpu-model test-pass \
+  --gpu-model test \
   --gpu-count 8 \
   --node-id   my-droplet \
   --region    mkc1 \
-  --run-id    trace-001
+  --run-id    pass-001
 ```
 
 The tarball ships `run.sh` plus every `compose.*.yaml`; `run.sh` selects the
@@ -79,9 +79,8 @@ through compose.
 
 ## Test-family scenario dispatch
 
-The scenario is selected by the `--gpu-model` value itself — `--run-id` is
-not parsed by any container. Callers only need to pass a literal
-`--gpu-model` value:
+For the `test-*` gpu-models, the `--gpu-model` value itself selects the
+scenario. `--run-id` is a free-form trace ID and is not parsed:
 
 | `--gpu-model` | Behavior                                                                    |
 | ------------- | --------------------------------------------------------------------------- |
