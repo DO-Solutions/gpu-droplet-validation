@@ -12,6 +12,13 @@
 #
 # The read order encodes execution order and is easy to extend for the real
 # --gpu-model flows: just add the additional suite filenames.
+#
+# IMPORTANT: TAP output MUST be flat. Do NOT emit subtests — no
+# "# Subtest:" headers, no indented "1..N" sub-plans, and no per-suite
+# roll-up "ok N - <suite>" lines. Downstream integrators do not parse
+# TAP v14 subtests, so every test point must appear at the top level.
+# Suite grouping is preserved via a "# suite: <name>" comment line and
+# by pipe-delimiting each test name as "<suite> | <test name>".
 set -euo pipefail
 
 RESULTS_DIR="/results"
@@ -51,59 +58,53 @@ emit() {
 
 : > "$OUT"
 
-top_count="${#present[@]}"
+# Pre-pass: total test points across all present suites for the single
+# top-level plan line. Output is flat, so the plan covers every point.
+total=0
+for f in "${present[@]}"; do
+  total=$((total + $(jq '.tests | length' "$RESULTS_DIR/$f")))
+done
+
 emit "TAP version 14"
-emit "1..$top_count"
+emit "1..$total"
 
 overall_ok=1
-top_idx=0
+point=0
 for f in "${present[@]}"; do
-  top_idx=$((top_idx + 1))
   path="$RESULTS_DIR/$f"
 
   suite="$(jq -r '.suite' "$path")"
   tcount="$(jq '.tests | length' "$path")"
 
-  emit "# Subtest: $suite"
-  emit "    1..$tcount"
+  emit "# suite: $suite"
 
-  suite_ok=1
   for i in $(seq 0 $((tcount - 1))); do
     t_ok=$(jq -r ".tests[$i].ok" "$path")
     t_name=$(jq -r ".tests[$i].name" "$path")
     t_directive=$(jq -r ".tests[$i].directive // empty" "$path")
     t_has_diag=$(jq -r "(.tests[$i].diagnostic // null) | if . == null then \"0\" else \"1\" end" "$path")
 
-    point=$((i + 1))
+    point=$((point + 1))
     if [ "$t_ok" = "true" ]; then
       status="ok"
     else
       status="not ok"
-      suite_ok=0
       overall_ok=0
     fi
 
     if [ -n "$t_directive" ]; then
-      emit "    $status $point - $t_name # $t_directive"
+      emit "$status $point - $suite | $t_name # $t_directive"
     else
-      emit "    $status $point - $t_name"
+      emit "$status $point - $suite | $t_name"
     fi
 
     if [ "$t_has_diag" = "1" ]; then
-      emit "      ---"
-      # Dump diagnostic as key: value pairs. jq emits each line; indent to 6
-      # spaces to sit inside the subtest's 4-space indent as TAP YAML.
-      jq -r ".tests[$i].diagnostic | to_entries[] | \"      \(.key): \(.value | tojson)\"" "$path" \
+      emit "  ---"
+      jq -r ".tests[$i].diagnostic | to_entries[] | \"  \(.key): \(.value | tojson)\"" "$path" \
         | tee -a "$OUT"
-      emit "      ..."
+      emit "  ..."
     fi
   done
-
-  if [ "$suite_ok" = "1" ]; then
-    emit "ok $top_idx - $suite"
-  else
-    emit "not ok $top_idx - $suite"
-  fi
 done
 
 # tap_exit is written for traceability (did any test point report not ok?)
