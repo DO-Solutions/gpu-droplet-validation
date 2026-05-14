@@ -34,6 +34,7 @@ SUITE_FILES=(
   "gpu-health.json"
   "nvlink.json"
   "gemm-compute.json"
+  "dcgm-diag.json"
   "nccl-allreduce.json"
   "nccl-alltoall.json"
   "p2p-bandwidth.json"

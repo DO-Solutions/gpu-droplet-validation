@@ -32,6 +32,11 @@ IMAGES=(
   "setup-test:containers/setup-test/Dockerfile"
   "mock-test:containers/mock-test/Dockerfile"
   "teardown-test:containers/teardown-test/Dockerfile"
+  "prereqs-nvidia:containers/prereqs-nvidia/Dockerfile"
+  "setup-nvidia:containers/setup-nvidia/Dockerfile"
+  "dcgm-diag:containers/dcgm-diag/Dockerfile"
+  "nccl-tests-nvidia:containers/nccl-tests-nvidia/Dockerfile"
+  "teardown-nvidia:containers/teardown-nvidia/Dockerfile"
 )
 
 VERSION=""

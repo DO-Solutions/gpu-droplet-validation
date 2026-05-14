@@ -7,11 +7,32 @@ gets TAP v14 on stdout plus artifacts in `./results` (override with
 
 ## Families
 
-| `--gpu-model` | Status                                                     |
-| ------------- | ---------------------------------------------------------- |
-| `test`        | Mock CPU-only stack used for integration testing           |
+| `--gpu-model`  | Status                                                       |
+| -------------- | ------------------------------------------------------------ |
+| `test`         | Mock CPU-only stack used for integration testing             |
+| `nvidia-b300`  | Real B300 SXM6 stack: prereqs + setup + `dcgmi diag -r 3` + NCCL allreduce/alltoall + post-health |
 
-Real `nvidia` and `amd` suites are not yet implemented.
+Other `nvidia-*` and `amd-*` SKUs are not yet implemented; adding a new
+NVIDIA SKU is a one-line `case` arm in `containers/_lib/nvidia_models.sh`.
+
+### nvidia-b300 example
+
+```bash
+curl -fsSL \
+  "https://github.com/DO-Solutions/gpu-droplet-validation/releases/latest/download/gpu-droplet-validation-latest.tgz" \
+  | tar -xz
+sudo ./run.sh \
+  --gpu-model nvidia-b300 \
+  --gpu-count 8 \
+  --node-id   my-b300-droplet \
+  --region    mkc1 \
+  --run-id    b300-001
+```
+
+`run.sh` installs `nvidia-container-toolkit` from NVIDIA's apt repo if
+missing (it does **not** run `nvidia-ctk runtime configure` or restart
+docker — compose uses the `deploy.resources` device path, which goes through
+the same OCI prestart hook as `docker run --gpus all`).
 
 ## Bootstrap (cloud-init / Auto-ahoy / manual)
 
