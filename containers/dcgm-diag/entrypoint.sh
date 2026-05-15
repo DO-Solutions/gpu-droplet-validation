@@ -27,9 +27,12 @@ for _ in $(seq 1 40); do
 done
 [ "$ready" -eq 1 ] || die "nv-hostengine did not become ready"
 
-log "running: dcgmi diag -r ${DCGM_DIAG_LEVEL} -j (may take ~15 min for level 3)"
+log "running: dcgmi diag -r \"${DCGM_DIAG_TESTS}\" -p \"${DCGM_DIAG_PARAMS}\" -j"
 diag_rc=0
-dcgmi diag -r "${DCGM_DIAG_LEVEL}" -j > "$RAW" 2>/tmp/diag.err || diag_rc=$?
+dcgmi diag \
+  -r "${DCGM_DIAG_TESTS}" \
+  -p "${DCGM_DIAG_PARAMS}" \
+  -j > "$RAW" 2>/tmp/diag.err || diag_rc=$?
 log "dcgmi diag exit=$diag_rc"
 
 # Translate. Defensive: parse.jq tolerates schema drift and falls back to a
