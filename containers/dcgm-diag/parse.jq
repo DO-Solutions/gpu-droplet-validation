@@ -6,52 +6,55 @@
 #
 # Output: { suite: $suite, tests: [...] }
 #
-# Strategy: dcgmi 4.x emits a nested document under "DCGM Diagnostic" whose
-# structure has shifted slightly across point releases. Walking the tree for
-# every object that carries a "status" field captures every plugin result
-# regardless of how the parent containers are named, and then we attach
-# the closest meaningful "name" / "test_name" we can find for diagnostics.
+# dcgmi 4.x emits a nested document under "DCGM Diagnostic" containing
+# test_categories[].tests[], where each test has a real plugin name
+# (software / diagnostic / memory / pcie / targeted_power / targeted_stress),
+# a results[] array with one entry per GPU, and a test_summary with the
+# overall status. We emit one TAP point per test (aggregated across GPUs).
 
-def status_to_point($name; $gpu_ids; $warnings; $info):
-  ($name // "unknown") as $n
-  | ($gpu_ids // "all") as $g
-  | (.status // "Unknown") as $s
+def is_pass($s): ($s // "Unknown" | ascii_downcase) | IN("pass","ok");
+def is_skip($s): ($s // "Unknown" | ascii_downcase) | IN("skip","skipped","n/a","not_applicable");
+def is_ok_class($s): is_pass($s) or is_skip($s);
+
+def test_to_point:
+  . as $t
+  | (.name // "unknown") as $n
+  | (.test_summary.status // "Unknown") as $summary_status
+  | ((.results // []) | map(.status // "Unknown")) as $result_statuses
   | (
-      if ($s | ascii_downcase) | IN("pass","ok") then
-        { ok: true,  directive: null, diag_extra: null }
-      elif ($s | ascii_downcase) | IN("skip","skipped","n/a","not_applicable") then
-        { ok: true,  directive: "SKIP \($s)", diag_extra: null }
-      else
-        { ok: false, directive: null, diag_extra: { status: $s } }
-      end
-    ) as $verdict
+      ($result_statuses | all(is_ok_class(.)))
+      and is_ok_class($summary_status)
+    ) as $ok
+  | (
+      ($result_statuses | all(is_skip(.)))
+      and is_skip($summary_status)
+      and (($result_statuses | length) > 0)
+    ) as $all_skip
+  | (
+      (.results // [])
+      | map(select((.status // "Unknown") as $s | (is_ok_class($s) | not)))
+      | map({
+          gpu: .entity_id,
+          status: (.status // "Unknown"),
+          warnings: (.warnings // null),
+          info: (.info // null)
+        } | with_entries(select(.value != null)))
+    ) as $failed_gpus
   | {
-      ok: $verdict.ok,
-      name: "\($n) [gpus=\($g)]",
-      directive: $verdict.directive,
+      ok: $ok,
+      name: $n,
+      directive: (if $all_skip then "SKIP \($summary_status)" else null end),
       diagnostic: (
-        ($verdict.diag_extra // {})
-        + (if $warnings == null or ($warnings | length) == 0 then {} else { warnings: $warnings } end)
-        + (if $info == null or ($info | length) == 0 then {} else { info: $info } end)
-        | if (. | length) == 0 then null else . end
+        if $ok then null
+        else {
+          status: $summary_status,
+          failed_gpus: $failed_gpus
+        }
+        end
       )
     };
 
-# Find every result object in the tree (anything with a "status" field).
-[ .. | objects | select(has("status")) ] as $results
-
-# Pull the most useful "name" for each result by walking the path back up;
-# fall back to fields on the result itself.
-| ($results
-    | map(
-        . as $r
-        | (.test_name // .name // .plugin_name // .category // "dcgm test") as $n
-        | (.gpu_ids // .gpu_id // null) as $g
-        | (.warnings // .warning // null) as $w
-        | (.info // null) as $i
-        | $r | status_to_point($n; $g; $w; $i)
-      )
-  ) as $points
+((.["DCGM Diagnostic"].test_categories // []) | map(.tests // []) | add // []) as $tests
 
 | {
     suite: $suite,
@@ -63,12 +66,12 @@ def status_to_point($name; $gpu_ids; $warnings; $info):
         diagnostic: (if $rc == 0 then null else { exit_code: $rc } end)
       }]
       +
-      (if ($points | length) > 0 then $points
+      (if ($tests | length) > 0 then ($tests | map(test_to_point))
        else [{
          ok: false,
          name: "dcgmi diag produced parseable results",
          directive: null,
-         diagnostic: { raw_path: "/results/dcgm-diag_raw.json", reason: "no status fields found in JSON tree" }
+         diagnostic: { raw_path: "/results/dcgm-diag_raw.json", reason: "no tests found under DCGM Diagnostic.test_categories" }
        }] end)
     )
   }
