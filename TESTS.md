@@ -13,7 +13,7 @@ data attached to passing points) is always preserved in
 
 Thresholds and expected values come from
 [`containers/_lib/nvidia_models.sh`](containers/_lib/nvidia_models.sh).
-A clean run emits 21 TAP points across five suites in the order below.
+A clean run emits 20 TAP points across five suites in the order below.
 
 ### prereqs (6 points) — `containers/prereqs-nvidia/entrypoint.sh`
 
@@ -29,12 +29,20 @@ service_completed_successfully`; no downstream suite runs.
 | `All GPUs match model regex /B300/` | Each GPU `name` from `nvidia-smi` matches the regex `B300` | Wrong SKU was provisioned, or a card was swapped. Floors and thresholds below are calibrated for B300 and would not apply. |
 | `All GPUs report 275040 MiB memory` | Each GPU's `memory.total` equals 275040 MiB | A GPU has degraded memory visibility — often a sign of failed self-test, partial RMA, or wrong SKU. |
 
-### dcgm-diag (7 points) — `containers/dcgm-diag/`
+### dcgm-diag (6 points) — `containers/dcgm-diag/`
 
-Runs `dcgmi diag -r "memory,diagnostic,pcie,targeted stress,targeted
+Runs `dcgmi diag -r "memory,diagnostic,targeted stress,targeted
 power" -p "diagnostic.test_duration=300;targeted_stress.test_duration=600;targeted_power.test_duration=600"`.
 The `software` plugin runs unconditionally as a deployment check. Total
-DCGM phase ≈ 34 min on 8x B300.
+DCGM phase ≈ 29 min on 8x B300 (measured per-plugin: software ~30 s,
+diagnostic ~5 min, memory ~3 min, targeted_stress ~10 min,
+targeted_power ~10 min). The `pcie` plugin is deliberately *not* run —
+in isolation it took ~47 min on 8x B300 and dominated the entire phase;
+its GPU↔GPU bandwidth/latency signal is covered better by the NCCL
+allreduce busbw floor + transport assertion below, which exercise the
+fabric with the real collective workload. See
+[`nvidia_models.sh`](containers/_lib/nvidia_models.sh) for the full
+rationale and measured numbers.
 
 | Test | Threshold / criterion | What `not ok` means |
 |---|---|---|
@@ -42,7 +50,6 @@ DCGM phase ≈ 34 min on 8x B300.
 | `software` | DCGM software-stack deployment plugin: every GPU has a present driver, matching CUDA, NVML responsive, no missing libs. Pass = DCGM reports OK. | Driver/CUDA/NVML mismatch on at least one GPU; environment is not ready for the rest of the suite. The `diagnostic.failed_gpus` field names which GPU and the DCGM-supplied warning text. |
 | `diagnostic` | DCGM hardware diagnostic plugin (300s/GPU). Reads PCIe state, ECC counters, NVLink topology; exercises GEMM-class workloads to look for compute errors. Pass = DCGM reports OK. | A per-GPU hardware regression (compute error, NVLink degradation, ECC anomaly) that DCGM flagged. Per-GPU detail under `diagnostic.failed_gpus[]`. |
 | `memory` | DCGM memory plugin: allocates ~99% of HBM per GPU, walks pages, checks for ECC events during the walk. Pass = DCGM reports OK. | HBM has a fault that surfaces under stress: page maps unusable, or the allocation triggered uncorrectable errors. |
-| `pcie` | DCGM PCIe plugin: peer-to-peer bandwidth and latency between GPUs, link-state transitions. Pass = DCGM reports OK. | PCIe link is in a bad state (downgraded width/speed) or P2P transfers fail between specific pairs. NCCL allreduce below will likely also fail. |
 | `targeted_power` | DCGM sustained-power plugin (600s/GPU). Drives each GPU near TDP and verifies power telemetry stays in spec. Pass = DCGM reports OK. | GPU could not sustain target power, throttled, or telemetry reported out-of-spec. Usually correlates with thermal or VRM faults. |
 | `targeted_stress` | DCGM sustained-compute stress plugin (600s/GPU). Long-running GEMM-class load checking for correctness drift, hangs, or thermal excursions. Pass = DCGM reports OK. | The most common signal for "this GPU passes a quick check but fails under sustained load." Often the only test that catches marginal HBM or VRM issues. |
 
