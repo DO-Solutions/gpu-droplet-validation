@@ -32,6 +32,11 @@ IMAGES=(
   "setup-test:containers/setup-test/Dockerfile"
   "mock-test:containers/mock-test/Dockerfile"
   "teardown-test:containers/teardown-test/Dockerfile"
+  "prereqs-nvidia:containers/prereqs-nvidia/Dockerfile"
+  "setup-nvidia:containers/setup-nvidia/Dockerfile"
+  "dcgm-diag:containers/dcgm-diag/Dockerfile"
+  "nccl-tests-nvidia:containers/nccl-tests-nvidia/Dockerfile"
+  "teardown-nvidia:containers/teardown-nvidia/Dockerfile"
 )
 
 VERSION=""
@@ -113,7 +118,12 @@ versioned_tarball="$DIST_DIR/gpu-droplet-validation-$VERSION.tgz"
 latest_tarball="$DIST_DIR/gpu-droplet-validation-latest.tgz"
 
 log "pack: $versioned_tarball (compose files: ${#compose_files[@]})"
-tar czf "$versioned_tarball" -C "$staging" .
+# --owner=0 --group=0 --numeric-owner: force every entry (including the
+# leading "./") to record root ownership in the archive. Without this, the
+# build host's UID/GID (e.g. 1000) leaks into the tarball and chown's the
+# extraction dir to that UID when the user extracts as root.
+tar --owner=0 --group=0 --numeric-owner \
+  -czf "$versioned_tarball" -C "$staging" .
 cp "$versioned_tarball" "$latest_tarball"
 rm -rf "$staging"
 trap - EXIT

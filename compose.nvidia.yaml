@@ -1,0 +1,124 @@
+# Real-hardware validation stack for every --gpu-model nvidia-* SKU.
+# Per-SKU thresholds resolved inside the containers via /lib/nvidia_models.sh
+# keyed on $GPU_MODEL (exported by run.sh). One image set covers every SKU.
+#
+# GPU access uses the modern Compose deploy.resources device reservation,
+# which routes through the same OCI prestart hook as `docker run --gpus all`.
+# No runtime: nvidia, no daemon.json edits required.
+
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+x-common-env: &common-env
+  RUN_ID: ${RUN_ID:-}
+  GPU_MODEL: ${GPU_MODEL:-}
+  GPU_COUNT: ${GPU_COUNT:-}
+  NODE_ID: ${NODE_ID:-}
+  REGION: ${REGION:-}
+
+services:
+  prereqs:
+    image: ghcr.io/do-solutions/gpu-droplet-validation/prereqs-nvidia:${VERSION:-latest}
+    container_name: dv-prereqs
+    privileged: true
+    network_mode: host
+    ipc: host
+    environment:
+      <<: *common-env
+    volumes:
+      - ${RESULTS_DIR:-./results}:/results
+    <<: *gpu
+
+  setup:
+    image: ghcr.io/do-solutions/gpu-droplet-validation/setup-nvidia:${VERSION:-latest}
+    container_name: dv-setup
+    privileged: true
+    network_mode: host
+    ipc: host
+    environment:
+      <<: *common-env
+    volumes:
+      - ${RESULTS_DIR:-./results}:/results
+    depends_on:
+      prereqs:
+        condition: service_completed_successfully
+    <<: *gpu
+
+  dcgm-diag:
+    image: ghcr.io/do-solutions/gpu-droplet-validation/dcgm-diag:${VERSION:-latest}
+    container_name: dv-dcgm-diag
+    privileged: true
+    network_mode: host
+    ipc: host
+    environment:
+      <<: *common-env
+    volumes:
+      - ${RESULTS_DIR:-./results}:/results
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    <<: *gpu
+
+  nccl-allreduce:
+    image: ghcr.io/do-solutions/gpu-droplet-validation/nccl-tests-nvidia:${VERSION:-latest}
+    container_name: dv-nccl-allreduce
+    privileged: true
+    network_mode: host
+    ipc: host
+    environment:
+      <<: *common-env
+      NCCL_TEST: allreduce
+    volumes:
+      - ${RESULTS_DIR:-./results}:/results
+    depends_on:
+      dcgm-diag:
+        condition: service_completed_successfully
+    <<: *gpu
+
+  nccl-alltoall:
+    image: ghcr.io/do-solutions/gpu-droplet-validation/nccl-tests-nvidia:${VERSION:-latest}
+    container_name: dv-nccl-alltoall
+    privileged: true
+    network_mode: host
+    ipc: host
+    environment:
+      <<: *common-env
+      NCCL_TEST: alltoall
+    volumes:
+      - ${RESULTS_DIR:-./results}:/results
+    depends_on:
+      nccl-allreduce:
+        condition: service_completed_successfully
+    <<: *gpu
+
+  teardown:
+    image: ghcr.io/do-solutions/gpu-droplet-validation/teardown-nvidia:${VERSION:-latest}
+    container_name: dv-teardown
+    privileged: true
+    network_mode: host
+    ipc: host
+    environment:
+      <<: *common-env
+    volumes:
+      - ${RESULTS_DIR:-./results}:/results
+    depends_on:
+      nccl-alltoall:
+        condition: service_completed_successfully
+    <<: *gpu
+
+  tap-reporter:
+    image: ghcr.io/do-solutions/gpu-droplet-validation/tap-reporter:${VERSION:-latest}
+    container_name: dv-tap-reporter
+    environment:
+      <<: *common-env
+    volumes:
+      - ${RESULTS_DIR:-./results}:/results
+    depends_on:
+      teardown:
+        condition: service_completed_successfully

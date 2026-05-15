@@ -68,10 +68,13 @@ done
 case "$RESULTS_DIR" in /*) ;; *) RESULTS_DIR="$PWD/$RESULTS_DIR" ;; esac
 
 # Validate --gpu-model before creating any state on disk so a bad flag
-# doesn't leave behind a stray results dir.
+# doesn't leave behind a stray results dir. Per-SKU validation for nvidia-*
+# (e.g. is nvidia-b300 known?) happens inside the prereqs container via
+# /lib/nvidia_models.sh — unknown SKUs there exit non-zero and halt the stack.
 case "$GPU_MODEL" in
-  test) COMPOSE_FILE="$SCRIPT_DIR/compose.test.yaml" ;;
-  *)    die "unsupported --gpu-model value: $GPU_MODEL" ;;
+  test)     COMPOSE_FILE="$SCRIPT_DIR/compose.test.yaml" ;;
+  nvidia-*) COMPOSE_FILE="$SCRIPT_DIR/compose.nvidia.yaml" ;;
+  *)        die "unsupported --gpu-model value: $GPU_MODEL" ;;
 esac
 [ -f "$COMPOSE_FILE" ] || die "compose file not found: $COMPOSE_FILE"
 
@@ -115,12 +118,10 @@ ensure_pkg() {
   fi
 }
 
-ensure_docker() {
-  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    return
-  fi
-  log "installing Docker Engine + compose plugin from docker.com apt repo"
-  apt_update_once
+# Set up docker.com's apt source + keyring (idempotent). Used both when we
+# need to install Docker Engine from scratch and when docker.io is already
+# present but the compose plugin isn't in the Ubuntu repos for this release.
+setup_docker_com_apt() {
   apt-get install -y -qq ca-certificates curl gnupg >>"$LOG_FILE" 2>&1
   install -m 0755 -d /etc/apt/keyrings
   if [ ! -s /etc/apt/keyrings/docker.gpg ]; then
@@ -133,16 +134,83 @@ ensure_docker() {
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $codename stable" \
     > /etc/apt/sources.list.d/docker.list
   apt-get update -qq >>"$LOG_FILE" 2>&1
+}
+
+ensure_docker() {
+  local have_docker=0 have_compose=0
+  command -v docker >/dev/null 2>&1 && have_docker=1
+  [ "$have_docker" = 1 ] && docker compose version >/dev/null 2>&1 && have_compose=1
+  if [ "$have_docker" = 1 ] && [ "$have_compose" = 1 ]; then
+    return
+  fi
+
+  # If Docker is already present (e.g. Ubuntu's docker.io), DO NOT replace it
+  # — uninstalling docker.io to install docker-ce nukes the running engine.
+  # Add the compose plugin alongside the running engine instead. Ubuntu 24.04+
+  # ships docker-compose-v2 in the default repo; on older releases (22.04
+  # jammy), only docker.com publishes a standalone docker-compose-plugin .deb,
+  # so we fall back to adding that apt source.
+  if [ "$have_docker" = 1 ] && [ "$have_compose" = 0 ]; then
+    log "docker present, compose plugin missing — trying docker-compose-v2 from Ubuntu apt"
+    apt_update_once
+    if apt-get install -y -qq docker-compose-v2 >>"$LOG_FILE" 2>&1; then
+      return
+    fi
+    log "docker-compose-v2 unavailable; adding docker.com apt source for docker-compose-plugin"
+    setup_docker_com_apt
+    apt-get install -y -qq docker-compose-plugin >>"$LOG_FILE" 2>&1 || \
+      die "docker is installed but neither docker-compose-v2 (Ubuntu) nor docker-compose-plugin (docker.com) could be installed. Install one of them manually."
+    return
+  fi
+
+  # No docker at all — install Docker Engine + compose plugin from docker.com.
+  log "installing Docker Engine + compose plugin from docker.com apt repo"
+  apt_update_once
+  setup_docker_com_apt
   apt-get install -y -qq \
     docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
     >>"$LOG_FILE" 2>&1
 }
 
 ensure_docker_running() {
-  if ! systemctl is-active --quiet docker; then
-    log "starting docker"
-    systemctl enable --now docker >>"$LOG_FILE" 2>&1
+  if systemctl is-active --quiet docker; then
+    return
   fi
+  log "starting docker (socket + service)"
+  # docker-ce 28+ uses systemd socket activation; the service alone fails with
+  # "no sockets found via socket activation". Start docker.socket first so the
+  # listener is wired, then docker.service.
+  systemctl reset-failed docker.service docker.socket 2>>"$LOG_FILE" || true
+  systemctl enable docker.socket docker.service >>"$LOG_FILE" 2>&1 || true
+  systemctl start docker.socket >>"$LOG_FILE" 2>&1 || true
+  systemctl start docker.service >>"$LOG_FILE" 2>&1
+}
+
+# Install nvidia-container-toolkit if missing. Only needed for nvidia-* SKUs.
+# We deliberately do NOT run `nvidia-ctk runtime configure` or restart docker:
+# compose uses the deploy.resources device path (same as `--gpus all`), which
+# is wired through the OCI prestart hook and doesn't require a daemon-side
+# runtime registration.
+ensure_nvidia_toolkit() {
+  if command -v nvidia-ctk >/dev/null 2>&1; then
+    return
+  fi
+  log "installing nvidia-container-toolkit from NVIDIA apt repo"
+  apt_update_once
+  apt-get install -y -qq ca-certificates curl gnupg >>"$LOG_FILE" 2>&1
+  install -m 0755 -d /etc/apt/keyrings
+  if [ ! -s /etc/apt/keyrings/nvidia-container-toolkit.gpg ]; then
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+      | gpg --dearmor -o /etc/apt/keyrings/nvidia-container-toolkit.gpg 2>>"$LOG_FILE"
+    chmod a+r /etc/apt/keyrings/nvidia-container-toolkit.gpg
+  fi
+  # NVIDIA's stable repo path is /libnvidia-container/stable/deb/$ARCH/ but
+  # they publish a single suite list; following their official quickstart.
+  curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+    | sed 's#deb https://#deb [signed-by=/etc/apt/keyrings/nvidia-container-toolkit.gpg] https://#g' \
+    > /etc/apt/sources.list.d/nvidia-container-toolkit.list
+  apt-get update -qq >>"$LOG_FILE" 2>&1
+  apt-get install -y -qq nvidia-container-toolkit >>"$LOG_FILE" 2>&1
 }
 
 need_root
@@ -150,6 +218,9 @@ ensure_pkg curl curl
 ensure_pkg jq jq
 ensure_docker
 ensure_docker_running
+case "$GPU_MODEL" in
+  nvidia-*) ensure_nvidia_toolkit ;;
+esac
 
 # ---------- 3. Resolve VERSION (compose file already selected up-front) ----------
 # Load pinned image version from the tarball's sibling VERSION file (if any).

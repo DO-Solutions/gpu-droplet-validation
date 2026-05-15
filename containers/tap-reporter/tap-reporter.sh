@@ -34,6 +34,7 @@ SUITE_FILES=(
   "gpu-health.json"
   "nvlink.json"
   "gemm-compute.json"
+  "dcgm-diag.json"
   "nccl-allreduce.json"
   "nccl-alltoall.json"
   "p2p-bandwidth.json"
@@ -99,7 +100,7 @@ for f in "${present[@]}"; do
       emit "$status $point - $suite | $t_name"
     fi
 
-    if [ "$t_has_diag" = "1" ]; then
+    if [ "$t_has_diag" = "1" ] && [ "$t_ok" != "true" ]; then
       emit "  ---"
       jq -r ".tests[$i].diagnostic | to_entries[] | \"  \(.key): \(.value | tojson)\"" "$path" \
         | tee -a "$OUT"
