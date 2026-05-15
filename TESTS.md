@@ -101,3 +101,100 @@ investigation:
   raw nccl-tests perf-run output.
 - `results/nccl-allreduce_dmon.log`, `results/nccl-alltoall_dmon.log` —
   `nvidia-smi dmon` samples (SM/util/mem/power) over the run window.
+
+## Adding new tests
+
+A "test" here is one point in the TAP stream. Tests are emitted by a
+container that writes a single result file at
+`/results/<suite>.json` and is wired into the appropriate compose stack
+(`compose.test.yaml` for the mock family, `compose.nvidia.yaml` for the
+nvidia family). The `tap-reporter` container reads those JSON files in
+the order declared by its `SUITE_FILES` array
+(`containers/tap-reporter/tap-reporter.sh`) and emits the flat TAP
+v14 stream — so adding a new suite means:
+
+1. Build a container that writes `/results/<suite>.json` in the schema
+   below.
+2. Add the service to the right `compose.*.yaml`, wired with
+   `depends_on: ... service_completed_successfully` so it runs after
+   any prerequisite suite and before `tap-reporter`.
+3. Add `<suite>.json` to `SUITE_FILES` in
+   `containers/tap-reporter/tap-reporter.sh` in the order it should
+   appear in the TAP stream.
+4. Add the new test points to this file under the appropriate
+   `## --gpu-model <sku>` section, with threshold and `not ok`
+   interpretation.
+
+### Result-file schema
+
+Every suite's `/results/<suite>.json` must conform to:
+
+```json
+{
+  "suite": "<suite-name>",
+  "tests": [
+    {
+      "ok": true | false,
+      "name": "<short test description>",
+      "directive": null | "SKIP <reason>",
+      "diagnostic": null | { ... }
+    }
+  ]
+}
+```
+
+### Diagnostic convention
+
+The `diagnostic` field is what renders as the indented YAML block under
+a TAP point. The reporter only prints YAML for `not ok` points; passing
+points are a single line in TAP. Per-suite JSON keeps the diagnostic
+regardless, so passing diagnostics are fine but they will not surface
+on the human-facing stream.
+
+**Rule:** every `not ok` diagnostic MUST start with a `message` key
+whose value is a single human-readable sentence describing the failure.
+Additional structured fields (counts, thresholds, per-GPU detail, raw
+log excerpts) follow the message and are free-form. The intent is that
+anyone scanning the TAP output sees the *why* in one line before
+deciding whether to read the structured detail.
+
+Pass / fail examples:
+
+```yaml
+# passing point — diagnostic is null
+ok 4 - prereqs | GPU count == 8
+
+# failing point — diagnostic starts with `message`
+not ok 4 - prereqs | GPU count == 8
+  ---
+  message: "expected 8 GPUs, saw 9"
+  expected: 8
+  observed: 9
+  ...
+```
+
+```yaml
+not ok 10 - dcgm-diag | memory
+  ---
+  message: "dcgm 'memory' plugin reported Fail (1/8 GPU(s) failed)"
+  status: "Fail"
+  failed_gpus: [{"gpu":3,"status":"Fail","info":["..."]}]
+  ...
+```
+
+### How existing suites generate the `message` field
+
+- **Shell entrypoints** (`prereqs-nvidia`, `teardown-nvidia`,
+  `nccl-tests-nvidia`): `jq -n` builds the diagnostic object literal
+  with `message:` as the first field, optionally merged with structured
+  data via `{ message: ... } + $structured`. See
+  `containers/prereqs-nvidia/entrypoint.sh:add_test` for the shared
+  helper pattern (`add_test false "<name>" "<message>" "<structured-json>"`).
+- **Parsers** (`dcgm-diag/parse.jq`): the diagnostic is constructed
+  inside an `if $ok then null else { message: "...", ...rest } end`
+  branch, so the message is only computed for failing points.
+
+When you add a suite, follow whichever pattern matches: a shell
+entrypoint that calls a small `add_test` helper, or a jq parser that
+constructs the result object directly. The convention is the same
+either way — `message` first, structured detail after.

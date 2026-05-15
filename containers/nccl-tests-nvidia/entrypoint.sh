@@ -135,12 +135,17 @@ if [ "$NCCL_TEST" = "allreduce" ]; then
     pass_floor=false
   fi
 
+  # On failure prepend a human-readable message (convention: every not-ok
+  # diagnostic starts with a `message` field). The performance fields are
+  # preserved on pass too, since they're useful even when the floor was met.
   diag_floor="$(jq -n \
     --argjson busbw_8g_GBps "$busbw_8g" \
     --argjson floor "$NCCL_ALLREDUCE_FLOOR" \
     --argjson best_avg "${best_avg:-0}" \
     --argjson per_size "$per_size_table" \
-    '{ busbw_8g_GBps: $busbw_8g_GBps, floor_GBps: $floor, best_avg_busbw_GBps: $best_avg, per_size_table: $per_size }')"
+    --argjson pass_floor "$pass_floor" \
+    '{ busbw_8g_GBps: $busbw_8g_GBps, floor_GBps: $floor, best_avg_busbw_GBps: $best_avg, per_size_table: $per_size }
+     | if $pass_floor then . else { message: "NCCL allreduce busbw@8GB is \($busbw_8g_GBps) GB/s, below the \($floor) GB/s floor" } + . end')"
 
   # NVLink transport pass/fail point.
   # Pass requires: every rank reports full direct P2P, the NVLS multicast
@@ -163,6 +168,11 @@ if [ "$NCCL_TEST" = "allreduce" ]; then
   if [ -n "$fallback_lines" ]; then
     nvl_ok=false
     diag_nvl_extra="$(echo "$diag_nvl_extra" | jq --arg lines "$fallback_lines" '. + { transport_fallback: $lines }')"
+  fi
+  # Prepend a human-readable message when the test failed (convention: every
+  # not-ok diagnostic starts with a `message` field).
+  if [ "$nvl_ok" = "false" ]; then
+    diag_nvl_extra="$(echo "$diag_nvl_extra" | jq '{ message: "NCCL did not use full direct-P2P NVLink + NVLS multicast across all ranks — transport regression suspected" } + .')"
   fi
 
   tests="$(jq -n \
@@ -189,11 +199,14 @@ else
 
   per_size_all="$(parse_per_size "$run_file" | jq -s '.')"
   avg="$(parse_avg_busbw "$run_file")"
-  diag="$(jq -n --arg avg "${avg:-}" --argjson per_size "$per_size_all" --argjson rc "$rc" '
-    { exit_code: $rc, avg_busbw_GBps: $avg, per_size_table: $per_size }')"
 
   pass=true
   [ "$rc" -eq 0 ] || pass=false
+
+  # On failure prepend a human-readable `message` field (convention).
+  diag="$(jq -n --arg avg "${avg:-}" --argjson per_size "$per_size_all" --argjson rc "$rc" --argjson pass "$pass" '
+    { exit_code: $rc, avg_busbw_GBps: $avg, per_size_table: $per_size }
+    | if $pass then . else { message: "NCCL alltoall_perf exited with code \($rc) — the collective could not complete" } + . end')"
 
   tests="$(jq -n --argjson pass "$pass" --argjson diag "$diag" '[
     { ok: $pass, name: "NCCL alltoall_perf exit code == 0", diagnostic: $diag }

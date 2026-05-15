@@ -13,12 +13,15 @@ results_tmp="$(mktemp)"
 trap 'rm -f "$results_tmp"' EXIT
 printf '[]' > "$results_tmp"
 
-# add_test <ok:true|false> <name> <diag-or-empty>
+# add_test <ok:true|false> <name> [message] [structured-json]
+# Convention: every not-ok diagnostic MUST start with a human-readable
+# `message` field (a single sentence describing the failure). Additional
+# structured fields can follow. Passing points use a null diagnostic.
 add_test() {
-  local ok="$1" name="$2" diag="${3:-}"
-  if [ -n "$diag" ]; then
-    jq --argjson ok "$ok" --arg name "$name" --arg diag "$diag" \
-       '. + [{ ok: $ok, name: $name, diagnostic: { detail: $diag } }]' \
+  local ok="$1" name="$2" msg="${3:-}" structured="${4:-null}"
+  if [ -n "$msg" ]; then
+    jq --argjson ok "$ok" --arg name "$name" --arg msg "$msg" --argjson s "$structured" \
+       '. + [{ ok: $ok, name: $name, diagnostic: ({ message: $msg } + (if $s == null then {} else $s end)) }]' \
        "$results_tmp" > "$results_tmp.next"
   else
     jq --argjson ok "$ok" --arg name "$name" \
@@ -34,17 +37,20 @@ mark_fail() { fail=1; }
 # 1. nvidia-smi responds at all.
 smi_out=""
 if smi_out="$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>&1)"; then
-  add_test true "nvidia-smi responds" ""
+  add_test true "nvidia-smi responds"
 else
-  add_test false "nvidia-smi responds" "$smi_out"
+  add_test false "nvidia-smi responds" \
+    "nvidia-smi failed to query GPUs — driver not loaded or runtime not wired" \
+    "$(jq -n --arg err "$smi_out" '{error: $err}')"
   mark_fail
 fi
 
 # 2. NVIDIA container runtime visible (CUDA libs injected = runtime worked).
 if [ -e /dev/nvidia0 ] || [ -e /dev/nvidiactl ]; then
-  add_test true "NVIDIA runtime exposes /dev/nvidia*" ""
+  add_test true "NVIDIA runtime exposes /dev/nvidia*"
 else
-  add_test false "NVIDIA runtime exposes /dev/nvidia*" "no /dev/nvidia* device nodes inside container"
+  add_test false "NVIDIA runtime exposes /dev/nvidia*" \
+    "no /dev/nvidia* device nodes inside container — nvidia-container-toolkit did not inject GPU devices"
   mark_fail
 fi
 
@@ -52,14 +58,16 @@ fi
 fabric_state="$(nvidia-smi -q 2>/dev/null | awk -F': ' '/^[[:space:]]*State[[:space:]]*:/ && seen {print $2; exit} /Fabric/ {seen=1}' | tr -d '[:space:]')"
 case "$fabric_state" in
   Completed|InProgress)
-    add_test true "nvidia-fabricmanager state ($fabric_state)" ""
+    add_test true "nvidia-fabricmanager state ($fabric_state)"
     ;;
   "")
     # Not all SKUs report a fabric block; treat absence as pass on non-NVSwitch boxes.
-    add_test true "nvidia-fabricmanager state (n/a on this SKU)" ""
+    add_test true "nvidia-fabricmanager state (n/a on this SKU)"
     ;;
   *)
-    add_test false "nvidia-fabricmanager state ($fabric_state)" "expected Completed or InProgress"
+    add_test false "nvidia-fabricmanager state ($fabric_state)" \
+      "fabricmanager state is '$fabric_state', expected Completed or InProgress" \
+      "$(jq -n --arg s "$fabric_state" '{state: $s, expected: ["Completed","InProgress"]}')"
     mark_fail
     ;;
 esac
@@ -70,9 +78,11 @@ if [ -n "$smi_out" ]; then
   seen_count="$(printf '%s\n' "$smi_out" | grep -c .)"
 fi
 if [ "$seen_count" -eq "$GPU_COUNT" ]; then
-  add_test true "GPU count == $GPU_COUNT" ""
+  add_test true "GPU count == $GPU_COUNT"
 else
-  add_test false "GPU count == $GPU_COUNT" "saw $seen_count GPUs"
+  add_test false "GPU count == $GPU_COUNT" \
+    "expected $GPU_COUNT GPUs, saw $seen_count" \
+    "$(jq -n --argjson e "$GPU_COUNT" --argjson o "$seen_count" '{expected: $e, observed: $o}')"
   mark_fail
 fi
 
@@ -97,16 +107,20 @@ if [ -n "$smi_out" ]; then
 fi
 
 if [ "$model_ok" = 1 ]; then
-  add_test true "All GPUs match model regex /$EXPECTED_GPU_MODEL_REGEX/" ""
+  add_test true "All GPUs match model regex /$EXPECTED_GPU_MODEL_REGEX/"
 else
-  add_test false "All GPUs match model regex /$EXPECTED_GPU_MODEL_REGEX/" "mismatch: $mismatch_models"
+  add_test false "All GPUs match model regex /$EXPECTED_GPU_MODEL_REGEX/" \
+    "GPU model(s) do not match /$EXPECTED_GPU_MODEL_REGEX/: $mismatch_models" \
+    "$(jq -n --arg r "$EXPECTED_GPU_MODEL_REGEX" --arg m "$mismatch_models" '{expected_regex: $r, mismatches: $m}')"
   mark_fail
 fi
 
 if [ "$mem_ok" = 1 ]; then
-  add_test true "All GPUs report $EXPECTED_MEM_MIB MiB memory" ""
+  add_test true "All GPUs report $EXPECTED_MEM_MIB MiB memory"
 else
-  add_test false "All GPUs report $EXPECTED_MEM_MIB MiB memory" "mismatch: $mismatch_mems"
+  add_test false "All GPUs report $EXPECTED_MEM_MIB MiB memory" \
+    "GPU(s) report unexpected memory size: $mismatch_mems" \
+    "$(jq -n --argjson e "$EXPECTED_MEM_MIB" --arg m "$mismatch_mems" '{expected_mib: $e, mismatches: $m}')"
   mark_fail
 fi
 

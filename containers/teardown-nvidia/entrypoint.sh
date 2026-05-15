@@ -43,13 +43,17 @@ d_uncorr_total="$(echo "$delta" | jq '[.[] | .d_uncorrected] | add // 0')"
 if [ "$d_corr_total" = "0" ]; then
   add_test true "No new correctable ECC errors" "null"
 else
-  add_test false "No new correctable ECC errors" "$(echo "$delta" | jq '{ delta_corrected_total: '"$d_corr_total"', per_gpu: . }')"
+  add_test false "No new correctable ECC errors" \
+    "$(echo "$delta" | jq --argjson n "$d_corr_total" \
+        '{ message: "\($n) new correctable ECC error(s) across all GPUs since baseline", delta_corrected_total: $n, per_gpu: . }')"
 fi
 
 if [ "$d_uncorr_total" = "0" ]; then
   add_test true "No new uncorrectable ECC errors" "null"
 else
-  add_test false "No new uncorrectable ECC errors" "$(echo "$delta" | jq '{ delta_uncorrected_total: '"$d_uncorr_total"', per_gpu: . }')"
+  add_test false "No new uncorrectable ECC errors" \
+    "$(echo "$delta" | jq --argjson n "$d_uncorr_total" \
+        '{ message: "\($n) new UNCORRECTABLE ECC error(s) since baseline — GPU memory may be unreliable", delta_uncorrected_total: $n, per_gpu: . }')"
 fi
 
 # ----- Xid in dmesg -----
@@ -62,7 +66,10 @@ if [ "$xid_delta" -le 0 ]; then
   add_test true "No new Xid errors in dmesg" "null"
 else
   new_lines="$(printf '%s\n' "$xid_now_lines" | tail -n "$xid_delta")"
-  diag="$(jq -n --arg lines "$new_lines" --argjson n "$xid_delta" '{ new_xid_count: $n, lines: ($lines | split("\n") | map(select(length>0))) }')"
+  diag="$(jq -n --arg lines "$new_lines" --argjson n "$xid_delta" \
+    '{ message: "\($n) new NVRM Xid error(s) appeared in dmesg during the run — kernel-level NVIDIA driver fault",
+       new_xid_count: $n,
+       lines: ($lines | split("\n") | map(select(length>0))) }')"
   add_test false "No new Xid errors in dmesg" "$diag"
 fi
 
@@ -79,7 +86,9 @@ throttle_active="$(printf '%s\n' "$perf_out" \
 if [ -z "$throttle_active" ]; then
   add_test true "No thermal throttling observed" "null"
 else
-  diag="$(jq -n --arg active "$throttle_active" '{ active: ($active | split("\n") | map(select(length>0))) }')"
+  diag="$(jq -n --arg active "$throttle_active" \
+    '{ message: "HW or SW thermal slowdown is currently active on at least one GPU — cooling envelope inadequate",
+       active: ($active | split("\n") | map(select(length>0))) }')"
   add_test false "No thermal throttling observed" "$diag"
 fi
 
@@ -93,7 +102,10 @@ case "$failure" in *Yes*) remap_clean=0 ;; esac
 if [ "$remap_clean" = 1 ]; then
   add_test true "Row remap status clean" "null"
 else
-  diag="$(jq -n --arg p "$pending" --arg f "$failure" '{ pending: $p, failure_occurred: $f }')"
+  diag="$(jq -n --arg p "$pending" --arg f "$failure" \
+    '{ message: "HBM row remap is pending or has failed on at least one GPU — memory damage indicator",
+       pending: $p,
+       failure_occurred: $f }')"
   add_test false "Row remap status clean" "$diag"
 fi
 

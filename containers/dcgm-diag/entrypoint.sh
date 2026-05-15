@@ -44,7 +44,11 @@ if ! jq -f /parse.jq --arg suite "$SUITE" --argjson rc "$diag_rc" "$RAW" > "$OUT
     tests: [{
       ok: false,
       name: "dcgmi diag JSON parsed",
-      diagnostic: { error: $err, raw: "/results/dcgm-diag_raw.json" }
+      diagnostic: {
+        message: "dcgm-diag parser (parse.jq) failed on the raw dcgmi JSON",
+        error: $err,
+        raw: "/results/dcgm-diag_raw.json"
+      }
     }]
   }' > "$OUT"
 fi

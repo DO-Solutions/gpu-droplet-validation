@@ -47,6 +47,7 @@ def test_to_point:
       diagnostic: (
         if $ok then null
         else {
+          message: "dcgm '\($n)' plugin reported \($summary_status) (\($failed_gpus | length)/\($result_statuses | length) GPU(s) failed)",
           status: $summary_status,
           failed_gpus: $failed_gpus
         }
@@ -63,7 +64,7 @@ def test_to_point:
         ok: ($rc == 0),
         name: "dcgmi diag exit code == 0",
         directive: null,
-        diagnostic: (if $rc == 0 then null else { exit_code: $rc } end)
+        diagnostic: (if $rc == 0 then null else { message: "dcgmi diag exited with code \($rc)", exit_code: $rc } end)
       }]
       +
       (if ($tests | length) > 0 then ($tests | map(test_to_point))
@@ -71,7 +72,10 @@ def test_to_point:
          ok: false,
          name: "dcgmi diag produced parseable results",
          directive: null,
-         diagnostic: { raw_path: "/results/dcgm-diag_raw.json", reason: "no tests found under DCGM Diagnostic.test_categories" }
+         diagnostic: {
+           message: "no tests found under DCGM Diagnostic.test_categories — dcgmi JSON schema may have drifted",
+           raw_path: "/results/dcgm-diag_raw.json"
+         }
        }] end)
     )
   }
