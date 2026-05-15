@@ -118,28 +118,10 @@ ensure_pkg() {
   fi
 }
 
-ensure_docker() {
-  local have_docker=0 have_compose=0
-  command -v docker >/dev/null 2>&1 && have_docker=1
-  [ "$have_docker" = 1 ] && docker compose version >/dev/null 2>&1 && have_compose=1
-  if [ "$have_docker" = 1 ] && [ "$have_compose" = 1 ]; then
-    return
-  fi
-
-  # If Docker is already present (e.g. Ubuntu's docker.io), DO NOT replace it
-  # — uninstalling docker.io to install docker-ce nukes the running engine.
-  # Just add the missing compose plugin via apt and exit.
-  if [ "$have_docker" = 1 ] && [ "$have_compose" = 0 ]; then
-    log "docker present, compose plugin missing — installing docker-compose-plugin only"
-    apt_update_once
-    apt-get install -y -qq docker-compose-plugin >>"$LOG_FILE" 2>&1 || \
-      die "docker is installed but docker-compose-plugin could not be installed via the system apt repo. Install docker-compose-plugin or Docker Engine + Compose v2 manually."
-    return
-  fi
-
-  # No docker at all — install Docker Engine + compose plugin from docker.com.
-  log "installing Docker Engine + compose plugin from docker.com apt repo"
-  apt_update_once
+# Set up docker.com's apt source + keyring (idempotent). Used both when we
+# need to install Docker Engine from scratch and when docker.io is already
+# present but the compose plugin isn't in the Ubuntu repos for this release.
+setup_docker_com_apt() {
   apt-get install -y -qq ca-certificates curl gnupg >>"$LOG_FILE" 2>&1
   install -m 0755 -d /etc/apt/keyrings
   if [ ! -s /etc/apt/keyrings/docker.gpg ]; then
@@ -152,6 +134,39 @@ ensure_docker() {
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $codename stable" \
     > /etc/apt/sources.list.d/docker.list
   apt-get update -qq >>"$LOG_FILE" 2>&1
+}
+
+ensure_docker() {
+  local have_docker=0 have_compose=0
+  command -v docker >/dev/null 2>&1 && have_docker=1
+  [ "$have_docker" = 1 ] && docker compose version >/dev/null 2>&1 && have_compose=1
+  if [ "$have_docker" = 1 ] && [ "$have_compose" = 1 ]; then
+    return
+  fi
+
+  # If Docker is already present (e.g. Ubuntu's docker.io), DO NOT replace it
+  # — uninstalling docker.io to install docker-ce nukes the running engine.
+  # Add the compose plugin alongside the running engine instead. Ubuntu 24.04+
+  # ships docker-compose-v2 in the default repo; on older releases (22.04
+  # jammy), only docker.com publishes a standalone docker-compose-plugin .deb,
+  # so we fall back to adding that apt source.
+  if [ "$have_docker" = 1 ] && [ "$have_compose" = 0 ]; then
+    log "docker present, compose plugin missing — trying docker-compose-v2 from Ubuntu apt"
+    apt_update_once
+    if apt-get install -y -qq docker-compose-v2 >>"$LOG_FILE" 2>&1; then
+      return
+    fi
+    log "docker-compose-v2 unavailable; adding docker.com apt source for docker-compose-plugin"
+    setup_docker_com_apt
+    apt-get install -y -qq docker-compose-plugin >>"$LOG_FILE" 2>&1 || \
+      die "docker is installed but neither docker-compose-v2 (Ubuntu) nor docker-compose-plugin (docker.com) could be installed. Install one of them manually."
+    return
+  fi
+
+  # No docker at all — install Docker Engine + compose plugin from docker.com.
+  log "installing Docker Engine + compose plugin from docker.com apt repo"
+  apt_update_once
+  setup_docker_com_apt
   apt-get install -y -qq \
     docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
     >>"$LOG_FILE" 2>&1
