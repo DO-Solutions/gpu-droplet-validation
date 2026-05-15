@@ -53,13 +53,16 @@ run_nccl_perf() {
 }
 
 # Extract per-size busbw rows. nccl-tests perf output rows start with size in
-# bytes. Columns: size count type redop root time algbw busbw err  time algbw busbw err
-# (the second triplet is "in-place"). We use the in-place busbw (column 11).
+# bytes. Columns:
+#   size count type redop root | time algbw busbw err | time algbw busbw err
+#    $1   $2   $3    $4   $5     $6    $7    $8   $9    $10   $11   $12  $13
+# The two sub-headers are identical, so off-by-one ($11 = in-place algbw
+# vs $12 = in-place busbw) is easy to make. busbw is what the floor gates on.
 parse_per_size() {
   awk '
     /^#/ { next }
-    NF >= 12 && $1 ~ /^[0-9]+$/ {
-      printf "{\"size\":%s,\"busbw_oop\":%s,\"busbw_ip\":%s}\n", $1, $8, $11
+    NF >= 13 && $1 ~ /^[0-9]+$/ {
+      printf "{\"size\":%s,\"busbw_oop\":%s,\"busbw_ip\":%s}\n", $1, $8, $12
     }
   ' "$1"
 }
@@ -102,10 +105,10 @@ if [ "$NCCL_TEST" = "allreduce" ]; then
 
   cp "$best_run" "/results/${SUITE}_best.log"
 
-  # 3. Extract busbw@8GB from the best run's in-place column.
+  # 3. Extract busbw@8GB from the best run's in-place busbw column ($12).
   busbw_8g="$(awk '
     /^#/ { next }
-    NF >= 12 && $1 == "8589934592" { print $11; exit }
+    NF >= 13 && $1 == "8589934592" { print $12; exit }
   ' "$best_run")"
   [ -n "$busbw_8g" ] || busbw_8g="0"
 
