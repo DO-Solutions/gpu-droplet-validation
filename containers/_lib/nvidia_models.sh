@@ -16,17 +16,31 @@ case "$GPU_MODEL" in
     EXPECTED_LINK_SPEED="53.125 GB/s"
     NCCL_ALLREDUCE_FLOOR=810
     # DCGM plugin selection + per-plugin duration caps.
-    # Why not `-r 3`:
-    #   * Full `-r 3` on 8x B300 takes ~83 min — the targeted_stress and
-    #     targeted_power plugins use long-mode durations (~20 min each) and
-    #     nvbandwidth's full pair-wise sweep adds ~20 min.
-    #   * nvbandwidth's per-pair matrix is NOT exposed via JSON in DCGM 4.5.3
-    #     (only roll-up Pass/Fail) AND it passed cleanly on a real B300 box
-    #     that NCCL allreduce flagged as 42% below the 810 GB/s floor — so
-    #     it adds time without diagnostic value our NCCL containers don't
-    #     already give us better.
-    # Result: ~34 min for the DCGM phase, ~40 min full suite.
-    DCGM_DIAG_TESTS="memory,diagnostic,pcie,targeted stress,targeted power"
+    #
+    # Per-plugin wall-clock, measured 2026-05-15 on 8x B300 SXM6 AC
+    # (driver 590.48.01, DCGM 4.5.3-1), each plugin run in isolation:
+    #   software         ~30 s   (deployment check, always on)
+    #   diagnostic        ~5 min  (capped: diagnostic.test_duration=300)
+    #   memory            ~3 min  (187 s — exhaustive HBM walk, no duration knob)
+    #   pcie             ~47 min  (2799 s — P2P bw/latency sweep, no duration knob)
+    #   targeted_stress  ~10 min  (capped: targeted_stress.test_duration=600)
+    #   targeted_power   ~10 min  (capped: targeted_power.test_duration=600)
+    #
+    # `pcie` alone is ~47 min and dominates everything else combined. We drop
+    # it: the NCCL allreduce busbw floor + the NVLink-transport assertion in
+    # the nccl-tests container exercise the GPU<->GPU fabric with the real
+    # collective workload, which is strictly better signal than DCGM's
+    # synthetic P2P sweep (same argument we use for not running nvbandwidth,
+    # whose per-pair matrix DCGM 4.5.3 doesn't even expose in JSON).
+    #
+    # `memory` is kept — it's only ~3 min and is the one plugin that does an
+    # exhaustive HBM allocate-and-walk, the most likely test to surface a
+    # marginal HBM cell that the stress plugins miss.
+    #
+    # Result with pcie dropped: DCGM phase ~29 min, full suite ~36 min
+    # (was ~77 min / ~84 min with pcie). Earlier "~34 min" claims were
+    # measured against a list without pcie that never matched what shipped.
+    DCGM_DIAG_TESTS="memory,diagnostic,targeted stress,targeted power"
     DCGM_DIAG_PARAMS="diagnostic.test_duration=300;targeted_stress.test_duration=600;targeted_power.test_duration=600"
     ;;
   *)
