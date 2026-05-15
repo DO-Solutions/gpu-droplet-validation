@@ -24,7 +24,7 @@ actually means for triage.
 ```bash
 curl -fsSL \
   "https://github.com/DO-Solutions/gpu-droplet-validation/releases/latest/download/gpu-droplet-validation-latest.tgz" \
-  | tar -xz
+  | tar --no-same-owner -xz
 sudo ./run.sh \
   --gpu-model nvidia-b300 \
   --gpu-count 8 \
@@ -43,7 +43,7 @@ the same OCI prestart hook as `docker run --gpus all`).
 ```bash
 curl -fsSL \
   "https://github.com/DO-Solutions/gpu-droplet-validation/releases/latest/download/gpu-droplet-validation-latest.tgz" \
-  | tar -xz
+  | tar --no-same-owner -xz
 sudo ./run.sh \
   --gpu-model test \
   --gpu-count 8 \

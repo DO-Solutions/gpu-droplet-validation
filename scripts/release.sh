@@ -118,7 +118,12 @@ versioned_tarball="$DIST_DIR/gpu-droplet-validation-$VERSION.tgz"
 latest_tarball="$DIST_DIR/gpu-droplet-validation-latest.tgz"
 
 log "pack: $versioned_tarball (compose files: ${#compose_files[@]})"
-tar czf "$versioned_tarball" -C "$staging" .
+# --owner=0 --group=0 --numeric-owner: force every entry (including the
+# leading "./") to record root ownership in the archive. Without this, the
+# build host's UID/GID (e.g. 1000) leaks into the tarball and chown's the
+# extraction dir to that UID when the user extracts as root.
+tar --owner=0 --group=0 --numeric-owner \
+  -czf "$versioned_tarball" -C "$staging" .
 cp "$versioned_tarball" "$latest_tarball"
 rm -rf "$staging"
 trap - EXIT
