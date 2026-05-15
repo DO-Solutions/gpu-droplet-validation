@@ -15,6 +15,10 @@ gets TAP v14 on stdout plus artifacts in `./results` (override with
 Other `nvidia-*` and `amd-*` SKUs are not yet implemented; adding a new
 NVIDIA SKU is a one-line `case` arm in `containers/_lib/nvidia_models.sh`.
 
+See [TESTS.md](TESTS.md) for the per-SKU breakdown of every TAP point —
+threshold, pass/fail criterion, and what an `ok` vs `not ok` result
+actually means for triage.
+
 ### nvidia-b300 example
 
 ```bash
@@ -34,7 +38,7 @@ missing (it does **not** run `nvidia-ctk runtime configure` or restart
 docker — compose uses the `deploy.resources` device path, which goes through
 the same OCI prestart hook as `docker run --gpus all`).
 
-## Bootstrap (cloud-init / Auto-ahoy / manual)
+## Bootstrap (cloud-init / manual)
 
 ```bash
 curl -fsSL \
@@ -63,7 +67,11 @@ tags, runs the stack, and forwards TAP to stdout.
 
 - **stdout**: TAP v14 from the tap-reporter, only when the suite ran. If the
   TAP stream contains any `not ok` test points, at least one hardware check
-  did not pass. Empty stdout means the suite did not run at all.
+  did not pass. Empty stdout means the suite did not run at all. YAML
+  diagnostic blocks (the `---` / `...` indented payload following a test
+  point) are emitted **only for `not ok` points** — passing points render as
+  a single line. Per-suite JSON in the results dir always contains the full
+  diagnostic regardless, for postmortems.
 - **stderr**: silent on a successful or failed run. A single error line is
   written **only** when the suite could not run at all (missing prereqs,
   Docker / compose / image-pull failure, bad flags). Any stderr output is
