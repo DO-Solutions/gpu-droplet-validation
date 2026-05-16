@@ -1,0 +1,130 @@
+# Real-hardware validation stack for every --gpu-model amd-* SKU.
+# Per-SKU thresholds resolved inside the containers via /lib/amd_models.sh
+# keyed on $GPU_MODEL (exported by run.sh). One image set covers every SKU
+# (mi325x now; mi350x/mi355x later) — adding a SKU is one amd_models.sh arm
+# plus one vendored RVS conf, no compose changes.
+#
+# GPU access is plain ROCm device passthrough: /dev/kfd (KFD compute) +
+# /dev/dri (DRM render nodes), with the video/render groups and the
+# ptrace/seccomp relaxations ROCm profiling needs. No container toolkit, no
+# runtime shim, no daemon.json edits — unlike the nvidia path.
+
+x-gpu: &gpu
+  devices:
+    - /dev/kfd
+    - /dev/dri
+  group_add:
+    - video
+    - render
+  cap_add:
+    - SYS_PTRACE
+  security_opt:
+    - seccomp=unconfined
+  ipc: host
+
+x-common-env: &common-env
+  RUN_ID: ${RUN_ID:-}
+  GPU_MODEL: ${GPU_MODEL:-}
+  GPU_COUNT: ${GPU_COUNT:-}
+  NODE_ID: ${NODE_ID:-}
+  REGION: ${REGION:-}
+
+services:
+  prereqs:
+    image: ghcr.io/do-solutions/gpu-droplet-validation/prereqs-amd:${VERSION:-latest}
+    container_name: dv-prereqs
+    privileged: true
+    network_mode: host
+    environment:
+      <<: *common-env
+    volumes:
+      - ${RESULTS_DIR:-./results}:/results
+    <<: *gpu
+
+  setup:
+    image: ghcr.io/do-solutions/gpu-droplet-validation/setup-amd:${VERSION:-latest}
+    container_name: dv-setup
+    privileged: true
+    network_mode: host
+    environment:
+      <<: *common-env
+    volumes:
+      - ${RESULTS_DIR:-./results}:/results
+    depends_on:
+      prereqs:
+        condition: service_completed_successfully
+    <<: *gpu
+
+  rvs:
+    image: ghcr.io/do-solutions/gpu-droplet-validation/rvs:${VERSION:-latest}
+    container_name: dv-rvs
+    privileged: true
+    network_mode: host
+    environment:
+      <<: *common-env
+      # Wall-clock budget for the whole RVS run (seconds). The entrypoint
+      # kills RVS past this so a hung action (e.g. xGMI/pqt on an SR-IOV VF
+      # host with no peer access) can't block the suite forever. Unset =
+      # the entrypoint default (1800s).
+      RVS_TIMEOUT: ${RVS_TIMEOUT:-}
+    volumes:
+      - ${RESULTS_DIR:-./results}:/results
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    <<: *gpu
+
+  rccl-allreduce:
+    image: ghcr.io/do-solutions/gpu-droplet-validation/rccl-tests-amd:${VERSION:-latest}
+    container_name: dv-rccl-allreduce
+    privileged: true
+    network_mode: host
+    environment:
+      <<: *common-env
+      RCCL_TEST: allreduce
+    volumes:
+      - ${RESULTS_DIR:-./results}:/results
+    depends_on:
+      rvs:
+        condition: service_completed_successfully
+    <<: *gpu
+
+  rccl-alltoall:
+    image: ghcr.io/do-solutions/gpu-droplet-validation/rccl-tests-amd:${VERSION:-latest}
+    container_name: dv-rccl-alltoall
+    privileged: true
+    network_mode: host
+    environment:
+      <<: *common-env
+      RCCL_TEST: alltoall
+    volumes:
+      - ${RESULTS_DIR:-./results}:/results
+    depends_on:
+      rccl-allreduce:
+        condition: service_completed_successfully
+    <<: *gpu
+
+  teardown:
+    image: ghcr.io/do-solutions/gpu-droplet-validation/teardown-amd:${VERSION:-latest}
+    container_name: dv-teardown
+    privileged: true
+    network_mode: host
+    environment:
+      <<: *common-env
+    volumes:
+      - ${RESULTS_DIR:-./results}:/results
+    depends_on:
+      rccl-alltoall:
+        condition: service_completed_successfully
+    <<: *gpu
+
+  tap-reporter:
+    image: ghcr.io/do-solutions/gpu-droplet-validation/tap-reporter:${VERSION:-latest}
+    container_name: dv-tap-reporter
+    environment:
+      <<: *common-env
+    volumes:
+      - ${RESULTS_DIR:-./results}:/results
+    depends_on:
+      teardown:
+        condition: service_completed_successfully

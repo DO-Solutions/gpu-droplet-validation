@@ -11,9 +11,14 @@ gets TAP v14 on stdout plus artifacts in `./results` (override with
 | -------------- | ------------------------------------------------------------ |
 | `test`         | Mock CPU-only stack used for integration testing             |
 | `nvidia-b300`  | Real B300 SXM6 stack: prereqs + setup + `dcgmi diag -r 3` + NCCL allreduce/alltoall + post-health |
+| `amd-mi325x`   | Real MI325X stack: prereqs + setup + `rvs -c <conf> -d 3` (level 4) + RCCL allreduce/alltoall + post-health |
 
-Other `nvidia-*` and `amd-*` SKUs are not yet implemented; adding a new
+Other `nvidia-*` and `amd-*` SKUs are not yet implemented. Adding a new
 NVIDIA SKU is a one-line `case` arm in `containers/_lib/nvidia_models.sh`.
+Adding a new AMD SKU is one `case` arm in
+`containers/_lib/amd_models.sh` **plus** one vendored conf at
+`containers/rvs/conf/<gpu-model>/rvs_level_4.conf` — nothing else (no
+compose or image changes; the same five AMD containers serve every AMD SKU).
 
 See [TESTS.md](TESTS.md) for the per-SKU breakdown of every TAP point —
 threshold, pass/fail criterion, and what an `ok` vs `not ok` result
@@ -37,6 +42,32 @@ sudo ./run.sh \
 missing (it does **not** run `nvidia-ctk runtime configure` or restart
 docker — compose uses the `deploy.resources` device path, which goes through
 the same OCI prestart hook as `docker run --gpus all`).
+
+### amd-mi325x example
+
+```bash
+curl -fsSL \
+  "https://github.com/DO-Solutions/gpu-droplet-validation/releases/latest/download/gpu-droplet-validation-latest.tgz" \
+  | tar --no-same-owner -xz
+sudo ./run.sh \
+  --gpu-model amd-mi325x \
+  --gpu-count 8 \
+  --node-id   my-mi325x-droplet \
+  --region    mkc1 \
+  --run-id    mi325x-001
+```
+
+The AMD path needs **no** container toolkit — `run.sh` is a no-op for
+`amd-*` (ROCm GPU access is plain `/dev/kfd` + `/dev/dri` device
+passthrough wired in `compose.amd.yaml`, unlike
+`nvidia-container-toolkit`).
+
+Two prebuilt base images underpin the AMD stack and are **not rebuilt per
+release** (they are slow to compile and published out-of-band by
+`scripts/build-rvs-base.sh` and `scripts/build-rccl-tests-base.sh`):
+`ghcr.io/do-solutions/rvs-base` (compiled ROCm Validation Suite + ROCm
+runtime + amd-smi) and `ghcr.io/do-solutions/rccl-tests` (compiled
+rccl-tests). All per-release AMD images `FROM` one of these.
 
 ## Bootstrap (cloud-init / manual)
 
@@ -139,5 +170,26 @@ scripts/release.sh --version v1.20260424.120000
 
 One release builds and publishes every container and a single unified
 tarball together; there is no partial per-family release.
+
+### Out-of-band base images (infrequent, AMD only)
+
+The AMD stack depends on two prebuilt base images that are **not** part of
+the normal release because the RVS / rccl-tests compiles are slow. Rebuild
+them only when the pinned ROCm version changes or the upstream tool needs a
+bump. Neither requires an AMD GPU to build — only the ROCm SDK — so they
+run on any Docker + buildx host (CI, laptop, build box):
+
+```bash
+# ghcr.io/do-solutions/rvs-base:rocm<ver>   (compiled RVS + ROCm + amd-smi)
+scripts/build-rvs-base.sh           # --dry-run to preview
+
+# ghcr.io/do-solutions/rccl-tests:rocm<ver> (compiled rccl-tests)
+scripts/build-rccl-tests-base.sh    # --dry-run to preview
+```
+
+Pinned versions live in each script's header (currently ROCm 7.0.2 to
+match the MI325X droplet). After rebuilding, bump the `FROM` tag in the
+affected `containers/{rvs,prereqs-amd,setup-amd,teardown-amd,rccl-tests-amd}`
+Dockerfiles, then cut a normal release.
 
      

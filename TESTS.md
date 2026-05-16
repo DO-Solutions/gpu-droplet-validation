@@ -91,6 +91,96 @@ regressions induced by the stress phases.
 | `No thermal throttling observed` | No `(HW\|SW) (Thermal )?Slowdown : Active` line appears in `nvidia-smi -q -d PERFORMANCE` at post-test time | The card is currently throttling, i.e. the cooling envelope is insufficient at idle/cooldown — typically a fan or thermal-paste failure, not a software issue. |
 | `Row remap status clean` | `nvidia-smi -q -d ROW_REMAPPER` reports `Pending: No` and `Remapping Failure Occurred: No` on every GPU | HBM row remapping is pending or has failed. Pending = remap will happen on next reboot; failed = the GPU has run out of spare rows. Either way the card has memory damage. |
 
+## `--gpu-model amd-mi325x`
+
+Thresholds and expected values come from
+[`containers/_lib/amd_models.sh`](containers/_lib/amd_models.sh). A clean
+run on the **current host** emits TAP across five suites in the order
+below, and every point is `ok` **except** `rvs | power-stress (IET)`,
+which is `not ok` on the only available MI325X host
+(`very-bad-mi325x8-be-careful`, a VF/fabric box) — and, as a consequence,
+the `rvs | rvs exit code == 0` belt-and-suspenders point is also `not ok`
+because the non-zero RVS exit is real. Both are real `not ok` results (no
+SKIP) per direction until IET is validated on a non-VF host; the run exit
+code is therefore `1`.
+
+> **Adding a future AMD SKU** is a purely additive, two-file change: add
+> one `case` arm to
+> [`containers/_lib/amd_models.sh`](containers/_lib/amd_models.sh) (its
+> model regex + VRAM) and drop in one vendored conf at
+> `containers/rvs/conf/<gpu-model>/rvs_level_4.conf` (sourced from the RVS
+> repo's `conf/<SKU>/levels`). The conf directory name **is** the
+> `--gpu-model` value, so `amd_models.sh` resolves it with no extra
+> mapping. No compose, image, or parser changes — the same five AMD
+> containers and the conf-agnostic RVS parser serve every AMD SKU.
+
+### prereqs (5 points) — `containers/prereqs-amd/entrypoint.sh`
+
+A failure here halts the compose stack via `depends_on:
+service_completed_successfully`; no downstream suite runs.
+
+| Test | Threshold / criterion | What `not ok` means |
+|---|---|---|
+| `amd-smi responds` | `amd-smi list` exits 0 and enumerates GPUs | ROCm driver not loaded, or `/dev/kfd`/`/dev/dri` not passed through — the suite can't see the GPUs. |
+| `ROCm runtime exposes /dev/kfd and /dev/dri` | `/dev/kfd` exists and `/dev/dri` is a directory inside the container | Compose device passthrough did not wire the GPUs; nothing downstream can run. |
+| `GPU count == 8` | Number of `GPU N:` blocks in `amd-smi list` equals `--gpu-count` | One or more GPUs missing from the topology, or `--gpu-count` was wrong for this droplet shape. |
+| `All GPUs match model regex /MI325X/` | Each GPU `MARKET_NAME` from `amd-smi static` matches `MI325X` (case-insensitive) | Wrong SKU provisioned or a card swapped. Thresholds below are calibrated for MI325X. |
+| `All GPUs report 261824 MiB VRAM` | Each GPU's `vram.size.value` from `amd-smi static --vram` equals `EXPECTED_VRAM_MIB` (261824). | A GPU reports a different HBM size — a bad/mis-binned card or the wrong SKU provisioned. |
+
+### rvs (guard + exit-code + one point per RVS action) — `containers/rvs/`
+
+Runs `rvs -c /rvs/conf/amd-mi325x/rvs_level_4.conf -d 3` (the vendored
+MI325X level-4 conf). The parser is **conf-agnostic**: it reads the
+end-of-run RVS summary table and emits one TAP point per action that
+actually ran, so the exact list below is whatever the vendored conf
+defines. `results/rvs.log` is always preserved (like
+`dcgm-diag_raw.json`) for postmortems.
+
+| Test | Threshold / criterion | What `not ok` means |
+|---|---|---|
+| `rvs produced a summary table` | The RVS end-of-run summary table was found in the log | RVS did not complete, or its output format drifted; no per-action signal is trustworthy. Diagnostic points at `results/rvs.log`. |
+| `rvs exit code == 0` | The `rvs` process exited 0 | RVS reported overall failure. Belt-and-suspenders: flips on any RVS-level failure even if per-action parsing passes. **Expected `not ok` on the current host** because `power-stress` fails. |
+| `hbm_full (BABEL)` | Babel HBM stress: read/write/copy/add/mul/triad/dot kernels over HBM. Pass = table row `PASS`. | An HBM bandwidth/integrity fault surfaced under the Babel memory stress. |
+| `pcie_d2h_bandwidth (PEBB)` / `pcie_h2d_bandwidth (PEBB)` | PCIe device↔host bandwidth sweep, each direction. Pass = row `PASS`. | PCIe link degraded (lane width/speed) or a bandwidth regression on that direction. |
+| `xgmi_d2d_bandwidth (PBQT)` | xGMI device↔device peer bandwidth (bidirectional, all peers). Pass = row `PASS`. | The GPU↔GPU xGMI fabric is degraded — the AMD analogue of an NVLink regression; RCCL bandwidth below would also suffer. |
+| `memtest (MEM)` | Exhaustive GPU memory test (500 passes, stress mode). Pass = row `PASS`. | A marginal/failed memory cell — the most likely test to catch HBM damage the stress plugins miss. |
+| `compute-fp8-trig` / `compute-fp16-trig` / `compute-bf16-trig` / `compute-fp32-trig` / `compute-fp64-trig (GST)` | Sustained GEMM at a per-dtype target stress (hipBLASLt/rocBLAS). Pass = row `PASS`. | The GPU could not sustain the target compute throughput for that datatype, or produced incorrect results — marginal compute/VRM/thermal fault. |
+| `power-stress (IET)` | Sustained-power stress driving each GPU toward `target_power` (1000 W) via dgemm. Pass = row `PASS`. | GPU could not sustain target power / telemetry out of spec. **Expected `not ok` on the current host**: IET fails on `very-bad-mi325x8-be-careful` (VF/fabric box). Treated as a real `not ok` (no SKIP) until validated on a non-VF MI325X. The diagnostic lists the failing GPU ID(s) from the per-GPU `pass: FALSE` lines. |
+
+When an action fails, `diagnostic.failed_gpu_ids[]` lists only the GPU IDs
+RVS reported `pass: FALSE` for that action; passing GPUs are not echoed.
+
+### rccl-allreduce (1 point) — `containers/rccl-tests-amd/entrypoint.sh`
+
+Runs RCCL `all_reduce_perf -b 32K -e 8G -f 2 -g 8 -w 5 -n 20` three times,
+keeping the best by average bus bandwidth. Concurrently captures an
+`amd-smi monitor` sample stream to `results/rccl-allreduce_dmon.log`.
+
+| Test | Threshold / criterion | What `not ok` means |
+|---|---|---|
+| `RCCL all_reduce_perf busbw@8GB >= 300 GB/s` | In-place bus bandwidth at the 8 GiB message size from the best of 3 runs is at least **300 GB/s** (or no run produced a parseable Avg bus bandwidth) | The GPU complex is not delivering the collective bandwidth an MI325X should — most often an xGMI fabric or PCIe regression, or (if no run completed) a hang/abort. Floor calibrated 2026-05-16 across three idle 8× MI325X hosts (min best run 318.26 GB/s, spread <1%). The diagnostic includes `busbw_8g_GBps`, `best_avg_busbw_GBps`, and a full `per_size_table`. |
+
+### rccl-alltoall (1 point) — same container, `RCCL_TEST=alltoall`
+
+Runs `alltoall_perf -b 32K -e 8G -f 2 -g 8 -w 5 -n 20` three times, keeping
+the best by average bus bandwidth.
+
+| Test | Threshold / criterion | What `not ok` means |
+|---|---|---|
+| `RCCL alltoall_perf busbw@8GB >= 285 GB/s` | In-place bus bandwidth at the 8 GiB message size from the best of 3 runs is at least **285 GB/s** (or no run produced a parseable Avg bus bandwidth) | The all-to-all collective is not delivering expected bandwidth, or could not complete. Floor calibrated 2026-05-16 across three idle 8× MI325X hosts (min best run 301.67 GB/s, spread <1%). Same diagnostic shape as allreduce. |
+
+### post-health (4 points) — `containers/teardown-amd/entrypoint.sh`
+
+Compares post-test state against a baseline captured by `setup-amd`
+before RVS/RCCL ran.
+
+| Test | Threshold / criterion | What `not ok` means |
+|---|---|---|
+| `No new correctable ECC errors` | Summed `corrected` ECC count from `amd-smi metric --ecc` is unchanged from baseline | The stress phases triggered correctable ECC events — early warning of degrading memory. |
+| `No new uncorrectable ECC errors` | Summed `uncorrected` ECC count is unchanged from baseline | An uncorrectable ECC event occurred during the run; the affected memory is unreliable and the GPU should be quarantined. |
+| `No new amdgpu faults in dmesg` | Count of `amdgpu` lines in `dmesg -T` is `<=` baseline count | A kernel-level amdgpu fault fired during the run. The new lines are included verbatim in the diagnostic. |
+| `No thermal throttling observed` | No active throttle/PVIOL/thermal status in `amd-smi metric` at post-test time | The card is throttling at cooldown — cooling/power envelope inadequate, typically a hardware (fan/thermal) fault. |
+
 ## Reading a TAP failure
 
 The TAP stream and `results/output.tap` show one line per test point. On
@@ -109,13 +199,23 @@ investigation:
 - `results/nccl-allreduce_dmon.log`, `results/nccl-alltoall_dmon.log` —
   `nvidia-smi dmon` samples (SM/util/mem/power) over the run window.
 
+For `amd-mi325x`:
+
+- `results/rvs.log` — verbatim `rvs -c <conf> -d 3` text log (the
+  `[RESULT]` stream + the summary table the parser reads).
+- `results/rccl-allreduce_run.log`, `results/rccl-alltoall_run.log` —
+  raw rccl-tests perf-run output.
+- `results/rccl-allreduce_dmon.log`, `results/rccl-alltoall_dmon.log` —
+  `amd-smi monitor` samples over the run window.
+
 ## Adding new tests
 
 A "test" here is one point in the TAP stream. Tests are emitted by a
 container that writes a single result file at
 `/results/<suite>.json` and is wired into the appropriate compose stack
 (`compose.test.yaml` for the mock family, `compose.nvidia.yaml` for the
-nvidia family). The `tap-reporter` container reads those JSON files in
+nvidia family, `compose.amd.yaml` for the amd family). The `tap-reporter`
+container reads those JSON files in
 the order declared by its `SUITE_FILES` array
 (`containers/tap-reporter/tap-reporter.sh`) and emits the flat TAP
 v14 stream — so adding a new suite means:
