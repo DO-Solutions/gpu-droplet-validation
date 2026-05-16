@@ -107,10 +107,7 @@ else
   mark_fail
 fi
 
-# 5. VRAM. Informational until EXPECTED_VRAM_MIB is calibrated on a
-#    known-good host (0 = not yet calibrated). On a VF box the reported
-#    value differs (e.g. 261824 vs the nominal 262144) and would
-#    false-negative, so record it via a SKIP directive instead of failing.
+# 5. VRAM. Enforced as exact equality against EXPECTED_VRAM_MIB.
 vram_json="$(amd-smi static --vram --json 2>/dev/null || true)"
 vram_vals="$(echo "$vram_json" | jq -r '.gpu_data[].vram.size.value' 2>/dev/null | paste -sd, - || true)"
 if [ "$EXPECTED_VRAM_MIB" -eq 0 ]; then

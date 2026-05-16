@@ -20,10 +20,8 @@ case "$GPU_MODEL" in
     # Matched case-insensitively against amd-smi GPU name. The run log shows
     # "AMD Instinct Mi325X VF" on the VF/fabric host.
     EXPECTED_GPU_MODEL_REGEX="MI325X"
-    # Calibration TODO: derive from amd-smi on a known-good host. Until then
-    # prereqs records VRAM but does not fail on it (VF reporting differs and
-    # would false-negative). 0 = "not yet calibrated; treat as informational".
-    EXPECTED_VRAM_MIB=0
+    # Enforced expected per-GPU VRAM (amd-smi static --vram size.value).
+    EXPECTED_VRAM_MIB=261824
     # RCCL busbw@8GB floors (GB/s), best-of-3, in-place column. Calibrated
     # 2026-05-16 across three idle 8x MI325X VF hosts (147.182.158.107,
     # 146.190.255.172, 143.198.32.60): allreduce min-best 318.26, alltoall

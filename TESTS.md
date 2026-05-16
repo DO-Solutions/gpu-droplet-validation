@@ -125,7 +125,7 @@ service_completed_successfully`; no downstream suite runs.
 | `ROCm runtime exposes /dev/kfd and /dev/dri` | `/dev/kfd` exists and `/dev/dri` is a directory inside the container | Compose device passthrough did not wire the GPUs; nothing downstream can run. |
 | `GPU count == 8` | Number of `GPU N:` blocks in `amd-smi list` equals `--gpu-count` | One or more GPUs missing from the topology, or `--gpu-count` was wrong for this droplet shape. |
 | `All GPUs match model regex /MI325X/` | Each GPU `MARKET_NAME` from `amd-smi static` matches `MI325X` (case-insensitive) | Wrong SKU provisioned or a card swapped. Thresholds below are calibrated for MI325X. |
-| `All GPUs report expected VRAM` | **SKIP — not yet calibrated.** `EXPECTED_VRAM_MIB` is 0 until measured on a known-good host; observed values are recorded in the diagnostic but not enforced (VF VRAM reporting differs and would false-negative). | n/a while SKIP. Once calibrated this flips to an enforced equality check. |
+| `All GPUs report 261824 MiB VRAM` | Each GPU's `vram.size.value` from `amd-smi static --vram` equals `EXPECTED_VRAM_MIB` (261824). | A GPU reports a different HBM size — a bad/mis-binned card or the wrong SKU provisioned. |
 
 ### rvs (guard + exit-code + one point per RVS action) — `containers/rvs/`
 
