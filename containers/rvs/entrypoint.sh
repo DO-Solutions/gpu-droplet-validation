@@ -26,23 +26,22 @@ fi
 # [RESULT] stream (no table). stdout carries the per-action [RESULT] pass
 # lines and the final summary table — exactly what parse.sh needs.
 #
-# Debug level: -d 1 (NOT -d 3). The [RESULT] stream and the summary table
-# are emitted at every debug level, but RVS 3.x's mem module at -d 3 floods
-# stdout with per-block [INFO] lines ("Test2 on reading: 128/128 blocks")
-# — observed to produce a >2 GB log and stall the run for hours on the
-# 8x256 GB MI325X. -d 1 keeps results+table and runs in minutes.
-# Bounded wall-clock: a validation suite must never hang indefinitely. RVS
-# can hang forever on a host where an action can't make progress — observed
-# on SR-IOV VF boxes where the xGMI peer test (pqt/xgmi_d2d_bandwidth) has
-# no peer access and never returns (a 30 s test ran >45 min). timeout turns
-# that into a deterministic `not ok` so rccl/teardown/tap still run and
-# report. Generous default (covers a healthy full level-4 run); override
-# with RVS_TIMEOUT if a SKU legitimately needs longer.
+# Invoke exactly as proven on the MI325X host: `rvs -c <conf>` with NO
+# `-d` flag. RVS 1.5.37 at default verbosity emits the [RESULT] stream and
+# the end-of-run summary table the parser needs, and the full level-4 conf
+# completes in ~5 min. (A `-d` debug level only adds [INFO] spam — at -d 3
+# the mem module floods stdout into multi-GB logs and stalls for hours.)
+#
+# Bounded wall-clock as pure safety: a validation suite must never hang
+# indefinitely. A healthy run finishes well inside the budget; if some
+# action wedges on a bad host, timeout turns it into a deterministic
+# `not ok` so rccl/teardown/tap still run and report. Override RVS_TIMEOUT
+# if a SKU legitimately needs longer.
 RVS_TIMEOUT="${RVS_TIMEOUT:-1800}"
-log "running: timeout ${RVS_TIMEOUT}s rvs -c $RVS_CONF -d 1"
+log "running: timeout ${RVS_TIMEOUT}s rvs -c $RVS_CONF"
 rvs_rc=0
 timeout --signal=TERM --kill-after=30 "$RVS_TIMEOUT" \
-  rvs -c "$RVS_CONF" -d 1 > "$RAW" 2>&1 || rvs_rc=$?
+  rvs -c "$RVS_CONF" > "$RAW" 2>&1 || rvs_rc=$?
 log "rvs exit=$rvs_rc"
 
 # timeout(1) exits 124 (TERM) or 137 (128+KILL) when it had to kill rvs.
@@ -54,7 +53,7 @@ if [ "$rvs_rc" -eq 124 ] || [ "$rvs_rc" -eq 137 ]; then
     suite: $suite,
     tests: [
       { ok: false, name: "rvs completed within its time budget", directive: null,
-        diagnostic: { message: "RVS exceeded its \($t)s time budget and was killed (last action started: \"\($stuck)\"). On SR-IOV VF hosts the xGMI peer test (pqt) has no peer access and hangs.",
+        diagnostic: { message: "RVS exceeded its \($t)s time budget and was killed while running action \"\($stuck)\" (a healthy MI325X level-4 run completes in ~5 min).",
                       timeout_seconds: $t, hung_action: $stuck, raw: "/results/rvs.log" } },
       { ok: false, name: "rvs produced a summary table", directive: null,
         diagnostic: { message: "no RVS summary table — the run was killed on timeout before it could complete", raw: "/results/rvs.log" } }

@@ -26,13 +26,15 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 # Pinned versions. ROCM_VER drives both the rocm/dev-ubuntu base tag and the
-# published rvs-base tag; RVS_BRANCH is the matching RVS release branch.
+# published rvs-base tag; RVS_REF is the exact RVS commit to compile.
 ROCM_VER="${ROCM_VER:-7.0.2}"
 ROCM_IMAGE_TAG="${ROCM_IMAGE_TAG:-${ROCM_VER}-complete}"
-# NOT rocm-${ROCM_VER}: those release tags ship old 1.2.0-era RVS with no
-# end-of-run summary table (which the parser needs). `develop` is RVS 1.5.x
-# (matches the vendored scratch sample) and runs fine on ROCm 7.0.2.
-RVS_BRANCH="${RVS_BRANCH:-develop}"
+# Pinned to RVS 1.5.37 (git describe v1.5.0-37-g44c0022b), the version
+# proven on the MI325X host: runs the vendored level-4 conf in ~5 min, all
+# PASS (incl. xGMI/PBQT + IET), emits the summary table the parser needs.
+# NOT `develop` (RVS 3.x: dropped pbqt, hangs on pqt on VF hosts) and NOT
+# the rocm-${ROCM_VER} tag (old 1.2.0, no summary table).
+RVS_REF="${RVS_REF:-44c0022bbb8f14d060c0a11f36abbeee49b85d04}"
 IMAGE="ghcr.io/do-solutions/rvs-base:rocm${ROCM_VER}"
 
 DRY_RUN=0
@@ -45,14 +47,14 @@ run() {
 
 log "image:       $IMAGE"
 log "rocm tag:    rocm/dev-ubuntu-24.04:${ROCM_IMAGE_TAG}"
-log "rvs branch:  ${RVS_BRANCH}"
+log "rvs ref:     ${RVS_REF}"
 log "dry-run:     $DRY_RUN"
 
 run "docker buildx build \
   --platform linux/amd64 \
   -f 'containers/rvs-base/Dockerfile' \
   --build-arg ROCM_VERSION='${ROCM_IMAGE_TAG}' \
-  --build-arg RVS_BRANCH='${RVS_BRANCH}' \
+  --build-arg RVS_REF='${RVS_REF}' \
   -t '${IMAGE}' \
   --push \
   '${REPO_ROOT}'"

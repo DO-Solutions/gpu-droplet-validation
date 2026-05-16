@@ -6,20 +6,19 @@
 # No AMD GPU is required to BUILD this — compiling RVS only needs the ROCm
 # SDK + headers. A GPU is only needed at test runtime.
 #
-# ROCM_VERSION is the rocm/dev-ubuntu image tag (e.g. "7.0.2-complete") and
-# RVS_BRANCH is the ROCmValidationSuite release branch matching that ROCm
-# (e.g. "rocm-7.0.2"). Both are passed by scripts/build-rvs-base.sh.
-# RVS_BRANCH must be a ref whose RVS emits the end-of-run summary table
-# (the parser's source of truth). That is an RVS >= ~1.5 feature: the
-# ROCm-release tags (e.g. rocm-7.0.2) ship the OLD 1.2.0-era RVS which has
-# NO summary table, so `develop` is used instead (RVS 1.5.x — matches the
-# vendored scratch sample, version 1.5.37, which runs fine on ROCm 7.0.2).
+# RVS_REF is pinned to the EXACT commit of RVS 1.5.37
+# (git describe: v1.5.0-37-g44c0022b) — the version proven on the MI325X
+# host: it runs the vendored MI325X level-4 conf in ~5 min, all PASS
+# (incl. xGMI/PBQT and IET), and emits the end-of-run summary table the
+# parser keys on. This is also the version of the vendored scratch sample.
+# Do NOT use `develop` (RVS 3.x) — it dropped pbqt, hangs on the xGMI
+# (pqt) action on SR-IOV VF hosts, and floods stdout from the mem module.
 ARG ROCM_VERSION=7.0.2-complete
-ARG RVS_BRANCH=develop
+ARG RVS_REF=44c0022bbb8f14d060c0a11f36abbeee49b85d04
 
 # ---------- builder: compile RVS against the ROCm SDK ----------
 FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION} AS builder
-ARG RVS_BRANCH
+ARG RVS_REF
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -29,24 +28,19 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
-# Full clone (NOT --depth 1): RVS derives its version from `git describe`
-# against the latest tag, so a shallow clone yields a bogus 1.2.0 fallback.
-RUN git clone --branch "${RVS_BRANCH}" \
-      https://github.com/ROCm/ROCmValidationSuite.git rvs
+# Full clone (NOT --depth 1) then checkout the pinned commit: RVS derives
+# its version from `git describe` against the tags, so the history/tags
+# must be present (a shallow clone yields a bogus version fallback).
+RUN git clone https://github.com/ROCm/ROCmValidationSuite.git rvs \
+ && git -C rvs checkout "${RVS_REF}"
 WORKDIR /src/rvs
-# RVS develop's CMake hardcodes the *legacy* ROCm directory layout through
-# non-cache set()s that -D cannot override, and per-module CMake silently
-# RETURN()s a module out of the build (no error, just missing .so at
-# runtime: "could not load .so '.../libbabel.so'") when a path is wrong:
-#   - set(HIP_INC_DIR /opt/rocm/hip)        (babel) + hipcc at hip/bin/hipcc
-#   - HIP_HCC_LIB "hip_hcc"  -> wants /opt/rocm/lib/libhip_hcc.so
-#       (ancient name; modern HIP runtime is libamdhip64.so)
-#   - ROCM_SMI_{INC,LIB}_DIR = /opt/rocm/rocm_smi/{include,lib}
-#   - ROCBLAS_INC_DIR = /opt/rocm/include  -> wants bare rocblas.h there
-# ROCm 7.x ships none of those paths. Recreate the legacy tree with
-# symlinks so EVERY module (babel/gst/iet/mem/pbqt/pebb/...) configures and
-# builds. These are safe: the base image has no /opt/rocm/{hip,rocm_smi},
-# no /opt/rocm/include/{internal,rocblas.h,hipblaslt.h}, no libhip_hcc.so.
+
+# RVS's CMake assumes the *legacy* ROCm directory layout (HIP_INC_DIR
+# /opt/rocm/hip, hipcc at hip/bin, ancient libhip_hcc.so, rocm_smi under
+# /opt/rocm/rocm_smi, bare rocblas.h in /opt/rocm/include). ROCm 7.x ships
+# none of those paths; recreate the legacy tree with symlinks so every
+# module configures and builds. Safe: the base image has none of these
+# paths, so nothing is clobbered.
 RUN ln -sfn /opt/rocm /opt/rocm/hip \
  && ln -sfn /opt/rocm /opt/rocm/rocm_smi \
  && ln -sf  libamdhip64.so /opt/rocm/lib/libhip_hcc.so \
@@ -54,32 +48,23 @@ RUN ln -sfn /opt/rocm /opt/rocm/hip \
  && ln -sf  rocblas/internal      /opt/rocm/include/internal \
  && ln -sf  hipblaslt/hipblaslt.h /opt/rocm/include/hipblaslt.h
 
-# Drop the `edp` module: develop ships it broken (its POST_BUILD does
-# `cd .../edp.so/rocm_edp_helper` but that dir is absent from the tree and
-# it is NOT a git submodule, so the build dies at ~97%). There is no CMake
-# toggle for it, and the mi325x level-4 conf does not use edp — excise its
-# add_subdirectory so the build completes with every module we actually run.
+# edp is not used by the mi325x level-4 conf and has historically shipped
+# with a broken POST_BUILD; drop it if present (no-op if absent).
 RUN sed -i '/add_subdirectory(edp.so)/d' /src/rvs/CMakeLists.txt
 
-# RVS's HIP modules (babel/gst/iet/mem) hardcode HCC_CXX_FLAGS with
-# --amdgpu-target=gfx803/gfx900/gfx906/gfx908 only. The MI325X is gfx942
-# (CDNA3, MI300/MI325), so without it the kernels have NO matching code
-# object and every compute/memory action dies at runtime with
-# "Error: invalid device function" (rvs exits 98, no summary table).
-# Append gfx942 to every module's target list before configuring.
-RUN grep -rl 'amdgpu-target=gfx908' /src/rvs --include=CMakeLists.txt \
-    | xargs -r sed -i 's/--amdgpu-target=gfx908/--amdgpu-target=gfx908 --amdgpu-target=gfx942/g'
-
-# -DRVS_BUILD_TESTS=OFF: skip RVS's bundled googletest (not needed for the
-# `rvs` runtime; the vendored old gtest fails under the image GCC with
-# -Werror=maybe-uninitialized in gtest-death-test.cc).
-# CPATH (honored by gcc and the clang-based hipcc) is a belt-and-braces
-# include fallback alongside the rocblas/hipblaslt header symlinks above.
+# -DGPU_TARGETS=gfx942: the MI325X arch (CDNA3). RVS 1.5.x uses the modern
+# GPU_TARGETS cache var (confirmed from the host's working CMakeCache);
+# without it the HIP kernels have no matching code object and every
+# compute/memory action dies at runtime with "invalid device function".
+# -DRVS_BUILD_TESTS=OFF: skip the bundled googletest (not needed for the
+# `rvs` runtime; old gtest fails under the image GCC).
+# CPATH: belt-and-braces include fallback alongside the header symlinks.
 ENV CPATH=/opt/rocm/include/rocblas:/opt/rocm/include/hipblaslt:/opt/rocm/include
 RUN cmake -B build \
       -DROCM_PATH=/opt/rocm \
       -DCMAKE_INSTALL_PREFIX=/opt/rocm \
       -DCPACK_PACKAGING_INSTALL_PREFIX=/opt/rocm \
+      -DGPU_TARGETS=gfx942 \
       -DRVS_BUILD_TESTS=OFF \
  && make -C build -j"$(nproc)" \
  && (cd build && make package)
@@ -96,10 +81,11 @@ RUN apt-get update \
       rocblas hipblaslt amd-smi-lib ca-certificates \
       /tmp/rvs.deb \
  && rm -rf /var/lib/apt/lists/* /tmp/rvs.deb
-# RVS 3.x (develop) installs the binary + its module .so's under
-# /opt/rocm/rvs/ (NOT /opt/rocm/bin). Put that on PATH and the loader path
-# so `rvs` runs and finds libpebb/libgpup/... at runtime.
-ENV PATH=/opt/rocm/rvs:/opt/rocm/bin:${PATH}
-ENV LD_LIBRARY_PATH=/opt/rocm/rvs:/opt/rocm/lib:${LD_LIBRARY_PATH}
+# RVS 1.5.x installs the binary at /opt/rocm/bin/rvs and its module .so's
+# under /opt/rocm/lib/rvs/ (libpbqt/libgst/libbabel/...). rvs resolves
+# modules via its installed .rvsmodules.config; keep both on PATH/loader
+# path so the binary runs and the modules link at runtime.
+ENV PATH=/opt/rocm/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/rocm/lib/rvs:/opt/rocm/lib:${LD_LIBRARY_PATH}
 # Sanity: `rvs --version` needs no GPU. Build fails loudly if RVS is broken.
 RUN rvs --version
