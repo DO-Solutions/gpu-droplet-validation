@@ -24,6 +24,14 @@ case "$GPU_MODEL" in
     # prereqs records VRAM but does not fail on it (VF reporting differs and
     # would false-negative). 0 = "not yet calibrated; treat as informational".
     EXPECTED_VRAM_MIB=0
+    # RCCL busbw@8GB floors (GB/s), best-of-3, in-place column. Calibrated
+    # 2026-05-16 across three idle 8x MI325X VF hosts (147.182.158.107,
+    # 146.190.255.172, 143.198.32.60): allreduce min-best 318.26, alltoall
+    # min-best 301.67, run-to-run + cross-node spread <1%. Floors sit ~5-6%
+    # below the min best run — clears noise on a healthy idle host while
+    # catching a meaningfully degraded GPU/fabric.
+    RCCL_ALLREDUCE_FLOOR=300
+    RCCL_ALLTOALL_FLOOR=285
     ;;
   # Future SKUs are a pure additive change — add an arm here and a vendored
   # containers/rvs/conf/<gpu-model>/rvs_level_4.conf. e.g.:
@@ -41,8 +49,5 @@ esac
 # dependency on any external ROCm clone at runtime.
 RVS_CONF="/rvs/conf/${GPU_MODEL}/rvs_level_${RVS_LEVEL}.conf"
 
-# No RCCL bandwidth floor: exit-code-only gate by decision (single known-bad
-# host means no trusted bandwidth baseline yet). busbw is still captured in
-# the diagnostic for future floor calibration.
-
-export EXPECTED_GPU_MODEL_REGEX EXPECTED_VRAM_MIB RVS_LEVEL RVS_CONF
+export EXPECTED_GPU_MODEL_REGEX EXPECTED_VRAM_MIB RVS_LEVEL RVS_CONF \
+       RCCL_ALLREDUCE_FLOOR RCCL_ALLTOALL_FLOOR

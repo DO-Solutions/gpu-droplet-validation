@@ -152,21 +152,22 @@ RVS reported `pass: FALSE` for that action; passing GPUs are not echoed.
 
 ### rccl-allreduce (1 point) — `containers/rccl-tests-amd/entrypoint.sh`
 
-Runs RCCL `all_reduce_perf -b 32K -e 8G -f 2 -g 8 -w 5 -n 20` once.
-Concurrently captures an `amd-smi monitor` sample stream to
-`results/rccl-allreduce_dmon.log`.
+Runs RCCL `all_reduce_perf -b 32K -e 8G -f 2 -g 8 -w 5 -n 20` three times,
+keeping the best by average bus bandwidth. Concurrently captures an
+`amd-smi monitor` sample stream to `results/rccl-allreduce_dmon.log`.
 
 | Test | Threshold / criterion | What `not ok` means |
 |---|---|---|
-| `RCCL all_reduce_perf exit code == 0` | The binary exited 0 | The allreduce collective could not complete (hang, abort, illegal access). **Exit-code-only gate by decision** — no busbw floor yet (single known-bad host = no trusted baseline). Per-size + average busbw are still captured in the diagnostic for future floor calibration. |
+| `RCCL all_reduce_perf busbw@8GB >= 300 GB/s` | In-place bus bandwidth at the 8 GiB message size from the best of 3 runs is at least **300 GB/s** (or no run produced a parseable Avg bus bandwidth) | The GPU complex is not delivering the collective bandwidth an MI325X should — most often an xGMI fabric or PCIe regression, or (if no run completed) a hang/abort. Floor calibrated 2026-05-16 across three idle 8× MI325X hosts (min best run 318.26 GB/s, spread <1%). The diagnostic includes `busbw_8g_GBps`, `best_avg_busbw_GBps`, and a full `per_size_table`. |
 
 ### rccl-alltoall (1 point) — same container, `RCCL_TEST=alltoall`
 
-Runs `alltoall_perf -b 32K -e 8G -f 2 -g 8 -w 5 -n 20` once.
+Runs `alltoall_perf -b 32K -e 8G -f 2 -g 8 -w 5 -n 20` three times, keeping
+the best by average bus bandwidth.
 
 | Test | Threshold / criterion | What `not ok` means |
 |---|---|---|
-| `RCCL alltoall_perf exit code == 0` | The binary exited 0 | The alltoall collective could not complete. Exit-code-only gate, same rationale as allreduce; busbw captured for later calibration. |
+| `RCCL alltoall_perf busbw@8GB >= 285 GB/s` | In-place bus bandwidth at the 8 GiB message size from the best of 3 runs is at least **285 GB/s** (or no run produced a parseable Avg bus bandwidth) | The all-to-all collective is not delivering expected bandwidth, or could not complete. Floor calibrated 2026-05-16 across three idle 8× MI325X hosts (min best run 301.67 GB/s, spread <1%). Same diagnostic shape as allreduce. |
 
 ### post-health (4 points) — `containers/teardown-amd/entrypoint.sh`
 

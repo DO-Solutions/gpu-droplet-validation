@@ -8,15 +8,19 @@
 #
 # Pinned versions (keep in sync with the target droplet's ROCm — MI325X
 # run log: ROCm 7.0.2 / amdgpu 6.14.14):
-#   ROCM_VER          7.0.2   (rocm/dev-ubuntu-24.04:<ROCM_VER>-complete)
-#   RCCL_TESTS_BRANCH develop (ROCm/rccl-tests; pin to a tag once one tracks
-#                              the target ROCm)
+#   ROCM_VER         7.0.2   (rocm/dev-ubuntu-24.04:<ROCM_VER>-complete)
+#   RCCL_TESTS_REF   40b1b17901370a7880d4a56854b5361c89f8d324
+#     ROCm/rccl-tests, develop_deprecated, "Migration complete". An EXACT
+#     commit, not a branch: upstream migrated its default branch and the new
+#     `develop` HEAD faults (GPU memory access fault) on gfx942/MI325X. This
+#     ref is proven on MI325X bare-metal and in-container. Bump only after
+#     validating a newer ref on real MI325X hardware.
 # The ROCm version is baked into the published tag.
 #
 # Usage:
 #   scripts/build-rccl-tests-base.sh
 #   scripts/build-rccl-tests-base.sh --dry-run
-#   ROCM_VER=7.0.2 RCCL_TESTS_BRANCH=develop scripts/build-rccl-tests-base.sh
+#   ROCM_VER=7.0.2 RCCL_TESTS_REF=<sha> scripts/build-rccl-tests-base.sh
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,7 +28,7 @@ cd "$REPO_ROOT"
 
 ROCM_VER="${ROCM_VER:-7.0.2}"
 ROCM_IMAGE_TAG="${ROCM_IMAGE_TAG:-${ROCM_VER}-complete}"
-RCCL_TESTS_BRANCH="${RCCL_TESTS_BRANCH:-develop}"
+RCCL_TESTS_REF="${RCCL_TESTS_REF:-40b1b17901370a7880d4a56854b5361c89f8d324}"
 IMAGE="ghcr.io/do-solutions/rccl-tests:rocm${ROCM_VER}"
 
 DRY_RUN=0
@@ -37,14 +41,14 @@ run() {
 
 log "image:       $IMAGE"
 log "rocm tag:    rocm/dev-ubuntu-24.04:${ROCM_IMAGE_TAG}"
-log "rccl-tests:  ${RCCL_TESTS_BRANCH}"
+log "rccl-tests:  ${RCCL_TESTS_REF}"
 log "dry-run:     $DRY_RUN"
 
 run "docker buildx build \
   --platform linux/amd64 \
   -f 'containers/rccl-tests-base/Dockerfile' \
   --build-arg ROCM_VERSION='${ROCM_IMAGE_TAG}' \
-  --build-arg RCCL_TESTS_BRANCH='${RCCL_TESTS_BRANCH}' \
+  --build-arg RCCL_TESTS_REF='${RCCL_TESTS_REF}' \
   -t '${IMAGE}' \
   --push \
   '${REPO_ROOT}'"
