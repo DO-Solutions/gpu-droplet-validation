@@ -37,6 +37,15 @@ IMAGES=(
   "dcgm-diag:containers/dcgm-diag/Dockerfile"
   "nccl-tests-nvidia:containers/nccl-tests-nvidia/Dockerfile"
   "teardown-nvidia:containers/teardown-nvidia/Dockerfile"
+  # amd-* family. NOTE: rvs-base and rccl-tests base images are deliberately
+  # NOT here — they are slow to build and published out-of-band by
+  # scripts/build-rvs-base.sh / scripts/build-rccl-tests-base.sh, not per
+  # release. compose.amd.yaml is auto-picked up by the compose.*.yaml glob.
+  "prereqs-amd:containers/prereqs-amd/Dockerfile"
+  "setup-amd:containers/setup-amd/Dockerfile"
+  "rvs:containers/rvs/Dockerfile"
+  "rccl-tests-amd:containers/rccl-tests-amd/Dockerfile"
+  "teardown-amd:containers/teardown-amd/Dockerfile"
 )
 
 VERSION=""

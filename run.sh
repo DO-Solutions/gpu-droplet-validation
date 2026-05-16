@@ -74,6 +74,7 @@ case "$RESULTS_DIR" in /*) ;; *) RESULTS_DIR="$PWD/$RESULTS_DIR" ;; esac
 case "$GPU_MODEL" in
   test)     COMPOSE_FILE="$SCRIPT_DIR/compose.test.yaml" ;;
   nvidia-*) COMPOSE_FILE="$SCRIPT_DIR/compose.nvidia.yaml" ;;
+  amd-*)    COMPOSE_FILE="$SCRIPT_DIR/compose.amd.yaml" ;;
   *)        die "unsupported --gpu-model value: $GPU_MODEL" ;;
 esac
 [ -f "$COMPOSE_FILE" ] || die "compose file not found: $COMPOSE_FILE"
@@ -220,6 +221,12 @@ ensure_docker
 ensure_docker_running
 case "$GPU_MODEL" in
   nvidia-*) ensure_nvidia_toolkit ;;
+  amd-*)
+    # AMD needs no container toolkit. ROCm GPU access is plain device
+    # passthrough of /dev/kfd + /dev/dri (wired in compose.amd.yaml); there
+    # is no OCI prestart hook or daemon-side runtime registration to install,
+    # unlike nvidia-container-toolkit. Intentionally a no-op.
+    ;;
 esac
 
 # ---------- 3. Resolve VERSION (compose file already selected up-front) ----------
