@@ -9,6 +9,15 @@ passing points are a single line. The full per-test diagnostic (including
 data attached to passing points) is always preserved in
 `results/<suite>.json` for postmortems.
 
+The TAP point set is **identical** between the Docker Compose path (`run.sh`)
+and the Kubernetes path (`run-k8s.sh`) — same entrypoints, same
+`tap-reporter`. One k8s-only caveat: on a hard prereqs/setup/rvs failure the
+in-pod `tap-reporter` (the Job's main container) never runs, so instead of an
+emitted TAP doc `run-k8s.sh` reports a synthetic single `not ok` for that node
+and exit `255` ("could not run"), capturing the failing stage's logs under
+`results/<node>/`. Soft (perf-floor) failures behave exactly as in compose:
+real TAP with `not ok` points and exit `1`.
+
 ## `--gpu-model nvidia-b300`
 
 Thresholds and expected values come from

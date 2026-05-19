@@ -1,0 +1,33 @@
+gpu-droplet-validation — release {{ .Release.Name }} (ns {{ .Release.Namespace }})
+gpu-model={{ .Values.gpuModel }} gpu-count={{ .Values.gpuCount }} image-version={{ .Values.image.version }}
+
+This release created one INDEPENDENT single-node Job per target
+({{ if .Values.targetNodes }}nodes: {{ join ", " .Values.targetNodes }}{{ else }}1 Job, scheduled by nodeSelector{{ end }}).
+
+Per Job:
+
+  # wait for completion (Never-restart Job; exit 1 is a valid result)
+  kubectl -n {{ .Release.Namespace }} wait --for=condition=complete --timeout=2h job/<job-name>
+
+  # TAP v14 (only emitted when ALL init stages succeeded)
+  kubectl -n {{ .Release.Namespace }} logs job/<job-name> -c tap-reporter
+
+  # full artifacts — copy BEFORE ttlSecondsAfterFinished ({{ .Values.ttlSecondsAfterFinished }}s) GCs the pod
+  POD=$(kubectl -n {{ .Release.Namespace }} get pod -l job-name=<job-name> -o name | head -n1)
+  kubectl -n {{ .Release.Namespace }} cp "${POD#pod/}":/results ./results
+
+Hard-fail (prereqs/setup/rvs exit non-zero): tap-reporter never runs. The
+partial /results (e.g. prereqs.json) still survives in the pod — copy it as
+above and inspect, or use the wrapper which reconstructs TAP automatically.
+
+List this release's Jobs:
+  kubectl -n {{ .Release.Namespace }} get jobs -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Recommended: drive everything (node fan-out, wait, copy, TAP reconstruction,
+0/1/255 aggregate exit) with the wrapper that ships alongside the chart:
+  scripts/run-k8s.sh --gpu-model {{ .Values.gpuModel }} --gpu-count {{ .Values.gpuCount }} --target-nodes <node[,node...]>
+{{- if eq .Values.gpuModel "test" }}
+
+NOTE: gpu-model=test is the CPU-only mock stack — no GPU/privileged/hostIPC.
+Use it to validate the k8s path itself on any cluster.
+{{- end }}

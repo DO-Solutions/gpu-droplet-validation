@@ -1,0 +1,21 @@
+apiVersion: v2
+name: gpu-droplet-validation
+description: >-
+  Serial GPU validation suite (AMD/NVIDIA) as a per-node Kubernetes Job.
+  Same container images, entrypoints and /results TAP v14 contract as the
+  Docker Compose path — only the orchestration differs.
+type: application
+# Chart version is bumped independently of the suite image version.
+version: 0.1.0
+# Overridden at install time by --set image.version (release.sh pins it to the
+# suite VERSION in the packaged chart; stays "latest" for checkout dev).
+appVersion: "latest"
+kubeVersion: ">=1.25.0-0"
+home: https://github.com/DO-Solutions/gpu-droplet-validation
+keywords:
+  - gpu
+  - validation
+  - amd
+  - nvidia
+  - rocm
+  - cuda

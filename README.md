@@ -138,6 +138,56 @@ was produced; `255` is reserved for "the suite could not run at all."
 
 Anything else is treated as `pass-*`.
 
+## Kubernetes path
+
+The suite also runs on Kubernetes using the **same images, entrypoints and
+`/results` TAP v14 contract** — only the orchestration differs. Each targeted
+node gets one self-contained **single-node Job**: the serial stages
+(prereqs → setup → rvs/dcgm → collectives → teardown) are sequential
+`initContainers` sharing an `emptyDir` `/results`, and `tap-reporter` is the
+main container. "Multi-node" means *N independent single-node Jobs* run
+concurrently — there is no cross-node coordination.
+
+GPUs are requested via device-plugin resources (`amd.com/gpu` /
+`nvidia.com/gpu`), so the **AMD GPU device plugin** (or NVIDIA GPU operator)
+must already be installed on the GPU nodes. The Pod tolerates the model's GPU
+taint (`amd.com/gpu=true:NoSchedule` etc.) and the cordoned-node taint
+(`node.kubernetes.io/unschedulable`) so a suspect node that has been cordoned
+can still be validated; add org-specific taints with `--toleration`.
+
+```bash
+curl -fsSL \
+  "https://github.com/DO-Solutions/gpu-droplet-validation/releases/latest/download/gpu-droplet-validation-latest.tgz" \
+  | tar --no-same-owner -xz
+
+# one node
+./run-k8s.sh --gpu-model amd-mi325x --gpu-count 8 \
+  --region mkc1 --run-id mi325x-001 --target-nodes mi325x-a
+
+# several nodes at once (independent single-node runs)
+./run-k8s.sh --gpu-model amd-mi325x --gpu-count 8 --target-nodes mi325x-a,mi325x-b,mi325x-c
+
+# every node matching a label
+./run-k8s.sh --gpu-model amd-mi325x --gpu-count 8 --node-label gpu.amd.com/present=true
+
+# CPU-only mock — validates the k8s path itself on any cluster
+./run-k8s.sh --gpu-model test --gpu-count 8 --run-id pass-ci-001
+```
+
+`run-k8s.sh` preserves run.sh's exit contract aggregated across nodes: `0`
+all nodes ran and all ok, `1` some node had a `not ok` point, `255` a node
+could not run. Per-node TAP lands in `results/<node>/output.tap`. The Helm
+chart lives at `helm/` in the tarball (source: `deploy/helm/gpu-droplet-validation/`).
+
+If the AMD GPU device plugin does not inject `/dev/kfd` + `/dev/dri` (the
+`prereqs-amd` check hard-fails), set `--set rawDeviceFallback=true` (or the
+chart value) to hostPath-mount the device nodes exactly like compose. Verify
+device-plugin sufficiency first with a one-off `amd.com/gpu`-only pod:
+`ls -l /dev/kfd /dev/dri && amd-smi list`.
+
+ghcr packages are public, so no image pull secret is needed; `imagePullSecret`
+is an optional, default-off escape hatch only if they are ever made private.
+
 ## Layout
 
 - `run.sh` — entrypoint, shipped inside the release tarball.
@@ -149,8 +199,12 @@ Anything else is treated as `pass-*`.
 - `containers/_lib/result.sh` — shell helpers (`log`, `die`,
   `write_result_json`) sourced by each entrypoint.
 - `scripts/release.sh` — builds + pushes every image and packages a single
-  unified tarball (`run.sh` + all `compose.*.yaml` + `VERSION`) under one
-  version tag, publishes to GitHub Releases.
+  unified tarball (`run.sh` + `run-k8s.sh` + all `compose.*.yaml` + `helm/` +
+  `VERSION`) under one version tag, publishes to GitHub Releases.
+- `scripts/run-k8s.sh` — Kubernetes entrypoint (Helm chart driver), shipped
+  inside the release tarball alongside `run.sh`.
+- `deploy/helm/gpu-droplet-validation/` — Helm chart for the k8s path; one
+  single-node Job per target node, same images/results contract as compose.
 
 Images are published to `ghcr.io/do-solutions/gpu-droplet-validation/<name>`
 with both `:$VERSION` and `:latest` tags on every release.

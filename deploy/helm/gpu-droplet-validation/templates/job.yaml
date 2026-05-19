@@ -1,0 +1,107 @@
+{{- $root := . -}}
+{{- $stages := include "gdv.stageList" . | fromYaml -}}
+{{- $baseRun := .Values.runId | default (printf "auto-%s" (now | date "20060102T150405Z")) -}}
+{{- $nodes := .Values.targetNodes -}}
+{{- if not $nodes -}}
+{{- $nodes = list "" -}}{{/* no explicit list: a single Job (pinned by nodeSelector if set) */}}
+{{- end -}}
+{{- $useGpu := $stages.gpu -}}
+{{- range $node := $nodes }}
+{{- $runId := $baseRun -}}
+{{- if $node -}}{{- $runId = printf "%s-%s" $baseRun (include "gdv.sanitize" $node) -}}{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "gdv.jobName" (dict "root" $root "node" $node) }}
+  labels:
+    app.kubernetes.io/name: {{ $root.Chart.Name }}
+    app.kubernetes.io/instance: {{ $root.Release.Name }}
+    app.kubernetes.io/managed-by: {{ $root.Release.Service }}
+    gdv/gpu-model: {{ $root.Values.gpuModel | quote }}
+    gdv/node: {{ $node | default "selector" | quote }}
+spec:
+  backoffLimit: {{ $root.Values.backoffLimit }}
+  ttlSecondsAfterFinished: {{ $root.Values.ttlSecondsAfterFinished }}
+  activeDeadlineSeconds: {{ $root.Values.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $root.Chart.Name }}
+        app.kubernetes.io/instance: {{ $root.Release.Name }}
+        gdv/node: {{ $node | default "selector" | quote }}
+    spec:
+      restartPolicy: {{ $root.Values.restartPolicy }}
+      {{- if and $useGpu $root.Values.hostIPC }}
+      hostIPC: true
+      {{- end }}
+      {{- if $root.Values.imagePullSecret.name }}
+      imagePullSecrets:
+        - name: {{ $root.Values.imagePullSecret.name }}
+      {{- end }}
+      {{- if $node }}
+      nodeSelector:
+        kubernetes.io/hostname: {{ $node | quote }}
+      {{- else if $root.Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml $root.Values.nodeSelector | nindent 8 }}
+      {{- end }}
+      tolerations:
+        {{- include "gdv.tolerations" (dict "root" $root "gpuTaintKey" $stages.gpuTaintKey) | nindent 8 }}
+      volumes:
+        - name: results
+          emptyDir: {}
+        {{- if and $useGpu $root.Values.rawDeviceFallback }}
+        - name: dev-kfd
+          hostPath:
+            path: /dev/kfd
+            type: CharDevice
+        - name: dev-dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+        {{- end }}
+      initContainers:
+        {{- range $s := $stages.init }}
+        - name: {{ $s.name }}
+          image: {{ include "gdv.image" (dict "root" $root "name" $s.image) }}
+          imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+          {{- if $useGpu }}
+          securityContext:
+            privileged: {{ $root.Values.privileged }}
+            capabilities:
+              {{- toYaml $root.Values.securityContext.capabilities | nindent 14 }}
+            seccompProfile:
+              {{- toYaml $root.Values.securityContext.seccompProfile | nindent 14 }}
+          {{- end }}
+          env:
+            {{- include "gdv.commonEnv" (dict "root" $root "node" $node "runId" $runId) | nindent 12 }}
+            {{- range $k, $v := $s.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- if $useGpu }}
+          resources:
+            limits:
+              {{ $stages.gpuResource | quote }}: {{ $root.Values.gpuCount }}
+          {{- end }}
+          volumeMounts:
+            - name: results
+              mountPath: /results
+            {{- if and $useGpu $root.Values.rawDeviceFallback }}
+            - name: dev-kfd
+              mountPath: /dev/kfd
+            - name: dev-dri
+              mountPath: /dev/dri
+            {{- end }}
+        {{- end }}
+      containers:
+        - name: tap-reporter
+          image: {{ include "gdv.image" (dict "root" $root "name" $stages.main) }}
+          imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+          env:
+            {{- include "gdv.commonEnv" (dict "root" $root "node" $node "runId" $runId) | nindent 12 }}
+          volumeMounts:
+            - name: results
+              mountPath: /results
+{{- end }}

@@ -1,0 +1,75 @@
+# gpu-droplet-validation Helm values.
+#
+# The k8s path reuses the SAME images/entrypoints/results contract as the
+# Docker Compose path. Only orchestration differs: each targeted node gets one
+# self-contained Job whose serial stages are initContainers and whose
+# tap-reporter is the main container, all sharing an emptyDir /results.
+
+image:
+  registry: ghcr.io
+  # Full image ref is <registry>/<repoPrefix>/<name>:<version>.
+  repoPrefix: do-solutions/gpu-droplet-validation
+  # release.sh writes the pinned suite VERSION here in the packaged chart.
+  # Stays "latest" when installed straight from a checkout.
+  version: latest
+  pullPolicy: IfNotPresent
+
+# ghcr packages are public — no pull secret is needed. This block is an
+# optional, default-off escape hatch only if the org ever makes them private.
+imagePullSecret:
+  name: ""              # reference an EXISTING docker-registry secret by name
+  create: false         # if true, the chart creates the secret below
+  dockerconfigjson: ""  # base64 .dockerconfigjson (only if create: true)
+
+# ---- Validation parameters (mirror run.sh flags / compose x-common-env) ----
+gpuModel: amd-mi325x    # test | amd-* | nvidia-*
+gpuCount: 8             # GPU_COUNT env AND device-plugin resource limit
+nodeId: ""              # NODE_ID env; defaults to the node name when empty
+region: ""              # REGION env
+runId: ""               # base RUN_ID; per-node "-<node>" suffix appended
+rvsTimeout: ""          # RVS_TIMEOUT (amd only); empty -> entrypoint default 1800
+
+# ---- Multi-node targeting ----
+# Every test is single-node. A non-empty list fans out into one INDEPENDENT
+# single-node Job per node (no cross-node coordination), each pinned by
+# kubernetes.io/hostname, with its own emptyDir and RUN_ID suffix.
+targetNodes: []
+# Used only when targetNodes is empty: a single Job scheduled to any node
+# matching this selector ("any one GPU node"). Empty {} = no constraint.
+nodeSelector: {}
+
+# ---- Tolerations: run on tainted GPU nodes AND cordoned nodes ----
+tolerations:
+  # Tolerate the model's GPU taint (amd.com/gpu / nvidia.com/gpu =true:NoSchedule).
+  gpuTaint: true
+  # Tolerate node.kubernetes.io/unschedulable so a Pod hard-pinned to one
+  # hostname still lands on a cordoned suspect node. Each Job is pinned to a
+  # single host, so this never causes unwanted spreading.
+  allowCordoned: true
+  # Extra raw toleration objects spliced verbatim for org-specific taints.
+  extra: []
+
+resources:
+  # amd.com/gpu for amd-*, nvidia.com/gpu for nvidia-* (set by gdv.stageList).
+  # Override only to force a non-default device-plugin resource name.
+  gpuResourceName: ""
+
+# Pod security — defaults match compose.amd.yaml's GPU access requirements.
+hostIPC: true           # RCCL single-node shared-memory transport needs it
+privileged: true        # mirrors compose privileged: true for GPU stages
+securityContext:
+  capabilities:
+    add: ["SYS_PTRACE"]
+  seccompProfile:
+    type: Unconfined
+
+# Device-plugin escape hatch. The AMD GPU device plugin SHOULD inject
+# /dev/kfd + /dev/dri when amd.com/gpu is requested. If the pre-flight check
+# (see chart NOTES / plan verification) shows it does not, set this true to
+# hostPath-mount the device nodes exactly like compose does.
+rawDeviceFallback: false
+
+backoffLimit: 0                 # exit 1 is a valid result; never retry
+restartPolicy: Never
+activeDeadlineSeconds: 7200     # whole-suite wall-clock guard
+ttlSecondsAfterFinished: 3600   # window for run-k8s.sh to kubectl cp /results
