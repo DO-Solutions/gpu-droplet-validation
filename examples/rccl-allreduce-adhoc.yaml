@@ -1,0 +1,84 @@
+# Ad-hoc: run RCCL all_reduce_perf once against a single GPU node to confirm
+# the GPUs / fabric / config work at all. Standalone Pod — no Helm, no compose,
+# no validation chain. This is DIAGNOSTIC ONLY: it runs the rccl-tests binary
+# directly (overriding the image entrypoint), so there is NO pass/fail floor —
+# the perf table + "Avg bus bandwidth" line in the logs are the signal.
+#
+# For a calibrated pass/fail run, use the full run.sh / compose flow on
+# amd-mi325x instead: the rccl-tests-amd entrypoint gates best-of-3 busbw@8GB
+# against RCCL_ALLREDUCE_FLOOR=300 GB/s (containers/_lib/amd_models.sh). This
+# example deliberately bypasses that entrypoint, so amd_models.sh / GPU_MODEL /
+# floors are never consulted.
+#
+# Apply:   kubectl apply -f examples/rccl-allreduce-adhoc.yaml
+# Wait:    kubectl wait --for=condition=Ready pod/rccl-allreduce-adhoc --timeout=5m
+# Watch:   kubectl logs -f pod/rccl-allreduce-adhoc        # primary signal (perf table on stdout)
+# Clean:   kubectl delete -f examples/rccl-allreduce-adhoc.yaml
+#
+# Retarget:
+#  - alltoall instead of allreduce: change the command's binary to
+#    /rccl-tests/build/alltoall_perf (same flags).
+#  - different GPU count: change BOTH the command's `-g N` AND
+#    resources.limits.amd.com/gpu to N (they must match).
+#
+# NOTES
+#  - The command flags mirror exactly what the suite's entrypoint runs
+#    (containers/rccl-tests-amd/entrypoint.sh): -b 32K -e 8G -f 2 -g 8 -w 5 -n 20.
+#  - hostIPC: true is required — RCCL uses single-node shared-memory transport.
+#  - GPU access here is via the amd.com/gpu device plugin only. If that does not
+#    expose the GPUs (no /dev/kfd access), drop `privileged: true` back in and
+#    add /dev/kfd + /dev/dri hostPath mounts (see examples/rvs-mi350x-level5.yaml).
+#  - Set nodeSelector hostname and NODE_ID to your actual node.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rccl-allreduce-adhoc
+  labels:
+    app: gpu-droplet-validation-scratch
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: CHANGEME-node            # <-- your GPU node
+  tolerations:
+    - key: amd.com/gpu                       # GPU node taint
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+    - key: node.kubernetes.io/unschedulable  # node may be cordoned
+      operator: Exists
+      effect: NoSchedule
+  hostIPC: true                              # RCCL single-node shared-mem transport
+  containers:
+    - name: rccl
+      image: ghcr.io/do-solutions/gpu-droplet-validation/rccl-tests-amd:latest
+      imagePullPolicy: Always
+      # Run the rccl-tests binary directly instead of the image's entrypoint:
+      # output streams to stdout (kubectl logs) and the Pod exits when it ends.
+      # `-g` MUST match resources.limits.amd.com/gpu below.
+      command:
+        - /rccl-tests/build/all_reduce_perf
+        - -b
+        - 32K
+        - -e
+        - 8G
+        - -f
+        - "2"
+        - -g
+        - "8"
+        - -w
+        - "5"
+        - -n
+        - "20"
+      securityContext:
+        capabilities:
+          add: ["SYS_PTRACE"]
+        seccompProfile:
+          type: Unconfined
+      env:
+        - name: RUN_ID
+          value: "rccl-allreduce-adhoc-001"
+        - name: NODE_ID
+          value: "CHANGEME-node"
+      resources:
+        limits:
+          amd.com/gpu: 8

@@ -11,14 +11,37 @@ gets TAP v14 on stdout plus artifacts in `./results` (override with
 | -------------- | ------------------------------------------------------------ |
 | `test`         | Mock CPU-only stack used for integration testing             |
 | `nvidia-b300`  | Real B300 SXM6 stack: prereqs + setup + `dcgmi diag -r 3` + NCCL allreduce/alltoall + post-health |
-| `amd-mi325x`   | Real MI325X stack: prereqs + setup + `rvs -c <conf> -d 3` (level 4) + RCCL allreduce/alltoall + post-health |
+| `amd-mi325x`   | Real MI325X stack: prereqs + setup + `rvs -c <conf>` (level 4) + RCCL allreduce/alltoall + post-health |
 
-Other `nvidia-*` and `amd-*` SKUs are not yet implemented. Adding a new
-NVIDIA SKU is a one-line `case` arm in `containers/_lib/nvidia_models.sh`.
-Adding a new AMD SKU is one `case` arm in
-`containers/_lib/amd_models.sh` **plus** one vendored conf at
-`containers/rvs/conf/<gpu-model>/rvs_level_4.conf` — nothing else (no
+Other `nvidia-*` and `amd-*` SKUs are not yet implemented in the full flow.
+Adding a new NVIDIA SKU is a one-line `case` arm in
+`containers/_lib/nvidia_models.sh`. Adding a new AMD SKU is one `case` arm
+in `containers/_lib/amd_models.sh` **plus** one vendored conf at
+`containers/rvs/conf/<gpu-model>/rvs_level_<N>.conf` — nothing else (no
 compose or image changes; the same five AMD containers serve every AMD SKU).
+
+### RVS standalone (one-off)
+
+Separate from the full flow above, the `rvs` container can run RVS by
+itself for AMD GPU types we do not yet fully validate. The vendored conf
+tree ships **levels 4 and 5** for **MI300X, MI325X, MI350X, MI355X**
+(mirrored verbatim from upstream
+`ROCmValidationSuite/rvs/conf/<MODEL>/levels/`):
+
+| `GPU_MODEL`   | level 4 (default) | level 5 (long soak, hours) |
+| ------------- | :---------------: | :------------------------: |
+| `amd-mi300x`  | ✔ | ✔ |
+| `amd-mi325x`  | ✔ | ✔ |
+| `amd-mi350x`  | ✔ | ✔ |
+| `amd-mi355x`  | ✔ | ✔ |
+
+Select with `GPU_MODEL` + `RVS_LEVEL` (default `4`); `rvs-base` is built
+for both `gfx942` (CDNA3: MI300X/MI325X) and `gfx950` (CDNA4:
+MI350X/MI355X). This is **one-off only** — the official `run.sh`/compose
+flow remains **`amd-mi325x` level 4 only**, and the extra SKUs have no
+calibrated pass/fail floors (the RVS log is the signal). See
+[`examples/`](examples/) for a ready-to-run Kubernetes manifest (level 5 on
+an MI350X node).
 
 See [TESTS.md](TESTS.md) for the per-SKU breakdown of every TAP point —
 threshold, pass/fail criterion, and what an `ok` vs `not ok` result

@@ -12,8 +12,11 @@
 : "${GPU_MODEL:?GPU_MODEL is not set; run.sh must export it}"
 
 # Level of the vendored RVS conf to run. Shared default across AMD SKUs;
-# a SKU arm may override it before RVS_CONF is derived.
-RVS_LEVEL=4
+# a SKU arm may override it before RVS_CONF is derived. Env-overridable so
+# a one-off standalone run can select another level (e.g. RVS_LEVEL=5 for
+# the long soak); the official run.sh/compose flow never sets it, so it
+# stays 4 there.
+RVS_LEVEL="${RVS_LEVEL:-4}"
 
 case "$GPU_MODEL" in
   amd-mi325x)
@@ -31,10 +34,16 @@ case "$GPU_MODEL" in
     RCCL_ALLREDUCE_FLOOR=300
     RCCL_ALLTOALL_FLOOR=285
     ;;
-  # Future SKUs are a pure additive change — add an arm here and a vendored
-  # containers/rvs/conf/<gpu-model>/rvs_level_4.conf. e.g.:
-  #   amd-mi350x) EXPECTED_GPU_MODEL_REGEX="MI350X"; EXPECTED_VRAM_MIB=0 ;;
-  #   amd-mi355x) EXPECTED_GPU_MODEL_REGEX="MI355X"; EXPECTED_VRAM_MIB=0 ;;
+  # RVS-one-off-only SKUs. These arms exist solely so the rvs entrypoint can
+  # resolve RVS_CONF for a standalone, manual run (e.g. an examples/ pod at
+  # level 5 on an MI350X node) — they are NOT calibrated for the full
+  # run.sh/compose validation flow. EXPECTED_VRAM_MIB=0 disables the prereqs
+  # VRAM gate, and no RCCL_*_FLOOR is set on purpose: a full flow on these
+  # SKUs still fails fast at rccl-tests-amd (unset floor). amd-mi325x above
+  # remains the only fully-calibrated validation SKU.
+  amd-mi300x) EXPECTED_GPU_MODEL_REGEX="MI300X"; EXPECTED_VRAM_MIB=0 ;;
+  amd-mi350x) EXPECTED_GPU_MODEL_REGEX="MI350X"; EXPECTED_VRAM_MIB=0 ;;
+  amd-mi355x) EXPECTED_GPU_MODEL_REGEX="MI355X"; EXPECTED_VRAM_MIB=0 ;;
   *)
     printf '[amd_models] unsupported GPU_MODEL: %s\n' "$GPU_MODEL" >&2
     exit 1

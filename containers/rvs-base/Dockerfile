@@ -52,10 +52,14 @@ RUN ln -sfn /opt/rocm /opt/rocm/hip \
 # with a broken POST_BUILD; drop it if present (no-op if absent).
 RUN sed -i '/add_subdirectory(edp.so)/d' /src/rvs/CMakeLists.txt
 
-# -DGPU_TARGETS=gfx942: the MI325X arch (CDNA3). RVS 1.5.x uses the modern
+# -DGPU_TARGETS="gfx942;gfx950": both Instinct archs this base serves.
+# gfx942 = CDNA3 (MI300X / MI325X — the full-validation SKU); gfx950 =
+# CDNA4 (MI350X / MI355X — RVS one-off only). RVS 1.5.x uses the modern
 # GPU_TARGETS cache var (confirmed from the host's working CMakeCache);
-# without it the HIP kernels have no matching code object and every
-# compute/memory action dies at runtime with "invalid device function".
+# without the matching arch the babel/mem/gst HIP kernels have no code
+# object and every compute/memory action dies at runtime with "invalid
+# device function". Keep both arches built so one rvs-base serves every
+# AMD SKU (mi325x flow is unaffected — gfx942 still present).
 # -DRVS_BUILD_TESTS=OFF: skip the bundled googletest (not needed for the
 # `rvs` runtime; old gtest fails under the image GCC).
 # CPATH: belt-and-braces include fallback alongside the header symlinks.
@@ -64,7 +68,7 @@ RUN cmake -B build \
       -DROCM_PATH=/opt/rocm \
       -DCMAKE_INSTALL_PREFIX=/opt/rocm \
       -DCPACK_PACKAGING_INSTALL_PREFIX=/opt/rocm \
-      -DGPU_TARGETS=gfx942 \
+      -DGPU_TARGETS="gfx942;gfx950" \
       -DRVS_BUILD_TESTS=OFF \
  && make -C build -j"$(nproc)" \
  && (cd build && make package)

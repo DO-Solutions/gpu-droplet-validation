@@ -13,6 +13,12 @@ source /lib/amd_models.sh
 RAW=/results/rvs.log
 OUT=/results/rvs.json
 
+# In the compose flow /results is a bind mount, but a standalone one-off run
+# (examples/, scratch/) has no volume — ensure the dir exists so the tee to
+# $RAW and the $OUT write land somewhere instead of dying with
+# "No such file or directory".
+mkdir -p "$(dirname "$RAW")"
+
 # Fail fast with an actionable message if this SKU has no vendored conf.
 # RVS_CONF is derived from $GPU_MODEL in amd_models.sh, and the entire conf
 # tree is baked into this image — a miss here means the SKU arm was added
@@ -25,6 +31,11 @@ fi
 # parser keys on is printed to stdout, while `-l` writes only the structured
 # [RESULT] stream (no table). stdout carries the per-action [RESULT] pass
 # lines and the final summary table — exactly what parse.sh needs.
+#
+# tee, not `> $RAW`: the run streams to *both* this container's stdout and
+# $RAW. The file is what parse.sh / full validation consumes; stdout is the
+# live signal for a one-off standalone run (`kubectl logs -f`). Both always
+# happen — each use case just reads whichever it needs.
 #
 # Invoke exactly as proven on the MI325X host: `rvs -c <conf>` with NO
 # `-d` flag. RVS 1.5.37 at default verbosity emits the [RESULT] stream and
@@ -39,9 +50,14 @@ fi
 # if a SKU legitimately needs longer.
 RVS_TIMEOUT="${RVS_TIMEOUT:-1800}"
 log "running: timeout ${RVS_TIMEOUT}s rvs -c $RVS_CONF"
-rvs_rc=0
+# tee to stdout + $RAW. PIPESTATUS[0] is timeout(1)'s exit (NOT tee's), so
+# the 124/137 timeout-kill detection below and the rvs_rc handed to
+# parse.sh stay exactly as before. (No `set -o pipefail`/`set -e` here, so
+# tee's own rc is irrelevant — it writes to a plain file and never fails in
+# practice.)
 timeout --signal=TERM --kill-after=30 "$RVS_TIMEOUT" \
-  rvs -c "$RVS_CONF" > "$RAW" 2>&1 || rvs_rc=$?
+  rvs -c "$RVS_CONF" 2>&1 | tee "$RAW"
+rvs_rc=${PIPESTATUS[0]}
 log "rvs exit=$rvs_rc"
 
 # timeout(1) exits 124 (TERM) or 137 (128+KILL) when it had to kill rvs.
