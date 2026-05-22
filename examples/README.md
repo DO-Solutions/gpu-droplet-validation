@@ -53,6 +53,44 @@ So a full level-5 run takes **hours**. The manifest sets
 `RVS_TIMEOUT=43200` (12 h) — the entrypoint's default 1800 s would kill a
 level-5 run almost immediately. Lower it for a deliberately partial soak.
 
+## `rccl-allreduce-adhoc.yaml` — diagnostic RCCL allreduce on one node
+
+A standalone Kubernetes Pod that runs the `rccl-tests-amd` image's
+`all_reduce_perf` binary **directly** (overriding the image entrypoint) to
+confirm a node's GPUs / fabric / config work at all. Modeled on
+`scratch/rccl.yaml`.
+
+```bash
+kubectl apply -f examples/rccl-allreduce-adhoc.yaml
+kubectl wait --for=condition=Ready pod/rccl-allreduce-adhoc --timeout=5m
+kubectl logs -f pod/rccl-allreduce-adhoc         # primary signal (perf table on stdout)
+
+kubectl delete -f examples/rccl-allreduce-adhoc.yaml
+```
+
+Before applying, set **`nodeSelector.kubernetes.io/hostname`** and the
+**`NODE_ID`** env to your actual node.
+
+### Diagnostic only — no floor gate
+
+Because the manifest runs the binary directly, it **bypasses the
+`rccl-tests-amd` entrypoint**: there is no `amd_models.sh`, no `GPU_MODEL`, and
+**no pass/fail floor**. The signal is the per-size busbw table and the
+`Avg bus bandwidth` line in the logs. For a calibrated pass/fail run, use the
+full `run.sh` / compose flow on `amd-mi325x`, where the entrypoint gates
+best-of-3 busbw@8GB against `RCCL_ALLREDUCE_FLOOR=300` GB/s
+(`containers/_lib/amd_models.sh`).
+
+### Retargeting
+
+- **alltoall** instead of allreduce: change the command's binary to
+  `/rccl-tests/build/alltoall_perf` (same flags).
+- **different GPU count**: change *both* the command's `-g N` and
+  `resources.limits.amd.com/gpu` to `N` — they must match.
+
+The flags mirror exactly what the suite's entrypoint runs:
+`-b 32K -e 8G -f 2 -g 8 -w 5 -n 20`.
+
 ### Why this is one-off only
 
 `amd-mi300x/350x/355x` have RVS-only arms in
