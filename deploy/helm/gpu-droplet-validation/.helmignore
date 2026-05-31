@@ -1,9 +1,0 @@
-# Packaged chart excludes — keep the artifact lean.
-ci/
-*.md
-.git/
-.gitignore
-*.tmp
-*.bak
-*~
-.DS_Store

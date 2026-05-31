@@ -1,11 +1,51 @@
 # examples/
 
-One-off, manual ways to drive the validation containers **outside** the
-official `run.sh` / compose flow. These are for exercising GPU types or RVS
-levels we do not yet fully validate. They are **not** the calibrated
-validation path — the official flow is `amd-mi325x` at RVS level 4 only,
-and there are **no pass/fail floors** for the other SKUs. The signal here is
-the raw RVS `[RESULT]` stream and end-of-run summary table in the logs.
+Standalone Kubernetes manifests you can `kubectl apply -f` directly — no
+script, no repo checkout. There are two kinds here:
+
+- **`full-suite-amd.yaml`** is **the calibrated validation run** as a single
+  self-contained Job — the same thing `run-k8s.sh` generates and applies, just
+  checked in so a customer can validate a node by sending one YAML. Use this
+  for a real pass/fail verdict.
+- **`rvs-mi350x-level5.yaml`** and **`rccl-allreduce-adhoc.yaml`** are **one-off
+  diagnostics** for exercising GPU types or RVS levels we do not yet fully
+  validate. They are **not** the calibrated path — the official flow is
+  `amd-mi325x`/`amd-mi350x` at RVS level 4 only, and there are **no pass/fail
+  floors** for the other SKUs. The signal there is the raw RVS `[RESULT]`
+  stream / RCCL busbw table in the logs.
+
+## `full-suite-amd.yaml` — the calibrated single-node run, no script needed
+
+A complete single-node Job: the serial validation stages
+(prereqs → setup → rvs → RCCL allreduce/alltoall → teardown) are
+`initContainers` sharing an `emptyDir` `/results`, and `tap-reporter` is the
+main container emitting the TAP v14 verdict — identical to the Docker Compose
+path, only orchestrated as a Job. It is byte-for-byte what
+`run-k8s.sh --gpu-model amd-mi350x --gpu-count 8 --target-nodes <node>
+--print-manifest` produces (so the two paths never drift); applying it directly
+is the no-script option when sending one file is easier than shipping the repo.
+
+```bash
+# Retarget first: set nodeSelector kubernetes.io/hostname, the NODE_ID env, and
+# the metadata.name (all marked CHANGEME). For another AMD SKU, also change
+# GPU_MODEL + the gpu count (env GPU_COUNT and resources.limits."amd.com/gpu").
+kubectl apply -f examples/full-suite-amd.yaml
+kubectl logs -f job/gdv-changeme-node -c tap-reporter   # TAP v14 — primary signal
+
+# pull the full artifact set the compose flow would also produce:
+POD=$(kubectl get pod -l job-name=gdv-changeme-node -o jsonpath='{.items[0].metadata.name}')
+kubectl cp "$POD":/results ./results -c tap-reporter
+
+kubectl delete -f examples/full-suite-amd.yaml
+```
+
+`amd-mi300x` · `amd-mi325x` · `amd-mi350x` · `amd-mi355x` all share this one
+image set; per-SKU thresholds resolve inside the containers from `$GPU_MODEL`.
+The header comment in the file documents every CHANGEME edit. The Pod tolerates
+the `amd.com/gpu` GPU taint **by key** (`operator: Exists`) because DOKS sets it
+with an empty value (`amd.com/gpu=:NoSchedule`). It requires the AMD GPU device
+plugin on the node; if that is absent, regenerate with
+`run-k8s.sh --raw-device-fallback` to hostPath-mount `/dev/kfd` + `/dev/dri`.
 
 ## `rvs-mi350x-level5.yaml` — RVS level-5 soak on one MI350X node
 

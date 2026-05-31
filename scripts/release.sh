@@ -123,32 +123,16 @@ done
 printf '%s\n' "$VERSION" > "$staging/VERSION"
 chmod +x "$staging/run.sh"
 
-# k8s path ships alongside compose in the SAME tarball: the wrapper, the Helm
-# chart, and the same VERSION file the wrapper reads to pin image.version.
-# Compose staging above is unchanged.
-cp "$REPO_ROOT/scripts/run-k8s.sh" "$staging/run-k8s.sh"
+# k8s path ships alongside compose in the SAME tarball: the run-k8s.sh wrapper
+# (generates + applies the Job manifests; no Helm) reads the same VERSION file
+# to pin the image version. examples/ ships too so the checked-in standalone
+# manifests travel with the release. Compose staging above is unchanged.
+cp "$REPO_ROOT/run-k8s.sh" "$staging/run-k8s.sh"
 chmod +x "$staging/run-k8s.sh"
-cp -r "$REPO_ROOT/deploy/helm/gpu-droplet-validation" "$staging/helm"
-# Pin the packaged chart's image version to this release (checkout dev stays
-# 'latest'); run-k8s.sh's sibling VERSION file is the authoritative override.
-sed -i -E "s|^(  version: ).*$|\1$VERSION|" "$staging/helm/values.yaml"
+cp -r "$REPO_ROOT/examples" "$staging/examples"
 
 versioned_tarball="$DIST_DIR/gpu-droplet-validation-$VERSION.tgz"
 latest_tarball="$DIST_DIR/gpu-droplet-validation-latest.tgz"
-
-# Optional standalone Helm chart artifact (for `helm install` straight from a
-# release asset). Skipped if helm is unavailable on the release host.
-chart_pkg=""
-if command -v helm >/dev/null 2>&1; then
-  helm package "$staging/helm" --destination "$DIST_DIR" \
-    --app-version "$VERSION" >&2 || true
-  chart_pkg="$(ls -1 "$DIST_DIR"/gpu-droplet-validation-*.tgz 2>/dev/null \
-    | grep -v "gpu-droplet-validation-$VERSION.tgz" \
-    | grep -v 'gpu-droplet-validation-latest.tgz' | head -n1 || true)"
-  [ -n "$chart_pkg" ] && log "helm chart packaged: $chart_pkg"
-else
-  log "helm not found — skipping standalone chart artifact (chart still ships inside the tarball)"
-fi
 
 log "pack: $versioned_tarball (compose files: ${#compose_files[@]})"
 # --owner=0 --group=0 --numeric-owner: force every entry (including the
@@ -170,7 +154,7 @@ run "gh release create '$VERSION' \
   --repo '$GH_SLUG' \
   --title '$VERSION' \
   --notes 'Automated release $VERSION — all containers and the unified tarball built together.' \
-  '$versioned_tarball' ${chart_pkg:+\"$chart_pkg\"}"
+  '$versioned_tarball'"
 
 # ---------- 5. Rolling 'latest' release ----------
 # GitHub does not allow re-uploading assets to an existing release under the
@@ -183,6 +167,6 @@ run "gh release create latest \
   --repo '$GH_SLUG' \
   --title 'latest' \
   --notes 'Rolling latest ($VERSION). Prefer versioned releases for pinning.' \
-  '$latest_tarball' ${chart_pkg:+\"$chart_pkg\"}"
+  '$latest_tarball'"
 
 log "done: $VERSION"
