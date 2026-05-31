@@ -26,7 +26,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-ROCM_VER="${ROCM_VER:-7.0.2}"
+ROCM_VER="${ROCM_VER:-7.2.1}"
 ROCM_IMAGE_TAG="${ROCM_IMAGE_TAG:-${ROCM_VER}-complete}"
 RCCL_TESTS_REF="${RCCL_TESTS_REF:-40b1b17901370a7880d4a56854b5361c89f8d324}"
 IMAGE="ghcr.io/do-solutions/rccl-tests:rocm${ROCM_VER}"

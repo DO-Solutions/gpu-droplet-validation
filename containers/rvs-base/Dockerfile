@@ -13,7 +13,7 @@
 # parser keys on. This is also the version of the vendored scratch sample.
 # Do NOT use `develop` (RVS 3.x) — it dropped pbqt, hangs on the xGMI
 # (pqt) action on SR-IOV VF hosts, and floods stdout from the mem module.
-ARG ROCM_VERSION=7.0.2-complete
+ARG ROCM_VERSION=7.2.1-complete
 ARG RVS_REF=44c0022bbb8f14d060c0a11f36abbeee49b85d04
 
 # ---------- builder: compile RVS against the ROCm SDK ----------

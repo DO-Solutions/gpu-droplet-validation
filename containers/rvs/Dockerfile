@@ -4,7 +4,7 @@
 # so it is built once into rvs-base by scripts/build-rvs-base.sh and never
 # rebuilt during a normal release. Keep the ROCm version tag in sync with
 # the target droplet's ROCm (MI325X run log: ROCm 7.0.2 / amdgpu 6.14.14).
-FROM ghcr.io/do-solutions/rvs-base:rocm7.0.2
+FROM ghcr.io/do-solutions/rvs-base:rocm7.2.1
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \

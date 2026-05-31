@@ -45,9 +45,8 @@ spec:
   nodeSelector:
     kubernetes.io/hostname: CHANGEME-mi350x-node     # <-- your MI350X node
   tolerations:
-    - key: amd.com/gpu                       # GPU node taint
-      operator: Equal
-      value: "true"
+    - key: amd.com/gpu                       # GPU node taint (DOKS sets an empty value, so match by key)
+      operator: Exists
       effect: NoSchedule
     - key: node.kubernetes.io/unschedulable  # node may be cordoned
       operator: Exists
