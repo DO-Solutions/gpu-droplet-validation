@@ -11,7 +11,7 @@
 # gfx942/MI325X. 40b1b17 (develop_deprecated, "Migration complete", describes
 # as therock-7.11-2-g40b1b17) is the build proven on MI325X bare-metal and
 # in-container. Bump only after validating a newer ref on real MI325X hardware.
-ARG ROCM_VERSION=7.0.2-complete
+ARG ROCM_VERSION=7.2.1-complete
 ARG RCCL_TESTS_REF=40b1b17901370a7880d4a56854b5361c89f8d324
 
 FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION} AS builder

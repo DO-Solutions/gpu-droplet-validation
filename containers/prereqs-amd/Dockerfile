@@ -1,6 +1,6 @@
 # FROM rvs-base: it already carries the full ROCm stack + amd-smi, so prereqs
 # can probe the GPUs with the same toolchain the rest of the AMD suite uses.
-FROM ghcr.io/do-solutions/rvs-base:rocm7.0.2
+FROM ghcr.io/do-solutions/rvs-base:rocm7.2.1
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       bash jq ca-certificates \

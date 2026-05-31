@@ -1,5 +1,5 @@
 # FROM rvs-base for the ROCm stack + amd-smi used to snapshot ECC/RAS state.
-FROM ghcr.io/do-solutions/rvs-base:rocm7.0.2
+FROM ghcr.io/do-solutions/rvs-base:rocm7.2.1
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       bash jq ca-certificates \
