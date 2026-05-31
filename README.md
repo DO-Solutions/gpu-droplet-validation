@@ -233,10 +233,9 @@ scripts/build-rvs-base.sh           # --dry-run to preview
 scripts/build-rccl-tests-base.sh    # --dry-run to preview
 ```
 
-Pinned versions live in each script's header (currently ROCm 7.2.1 —
-required for the MI350X RVS fp4/fp6/bf6 microscaling actions; MI325X must
-be re-validated on 7.2.1 before these images are promoted to production).
-After rebuilding, bump the `FROM` tag in the
+Pinned versions live in each script's header (currently ROCm 7.2.1 — the
+production default, required for the MI350X RVS fp4/fp6/bf6 microscaling
+actions). After rebuilding, bump the `FROM` tag in the
 affected `containers/{rvs,prereqs-amd,setup-amd,teardown-amd,rccl-tests-amd}`
 Dockerfiles, then cut a normal release.
 
