@@ -1,0 +1,92 @@
+# One-off: run the rvs container's RVS level-5 long soak on a single
+# MI350X node. Standalone Pod — no Helm, no compose, no validation chain.
+# This is NOT the calibrated validation flow (the official run.sh flow is
+# amd-mi325x level 4 only); it just exercises RVS on a GPU type we do not
+# yet fully validate. There are no pass/fail floors for non-mi325x SKUs —
+# the RVS [RESULT] stream + end-of-run summary table in the logs are the
+# signal.
+#
+# Apply:   kubectl apply -f examples/rvs-mi350x-level5.yaml
+# Wait:    kubectl wait --for=condition=Ready pod/rvs-mi350x-level5 --timeout=5m
+# Watch:   kubectl logs -f pod/rvs-mi350x-level5          # primary signal
+# Grab:    kubectl cp rvs-mi350x-level5:/results/rvs.json ./rvs.json   # optional
+#          kubectl cp rvs-mi350x-level5:/results/rvs.log  ./rvs.log    # optional
+# Clean:   kubectl delete -f examples/rvs-mi350x-level5.yaml
+#
+# Retarget: this same manifest runs any vendored SKU/level — change
+#   GPU_MODEL  -> amd-mi300x | amd-mi325x | amd-mi350x | amd-mi355x
+#   RVS_LEVEL  -> 4 (default, ~minutes) | 5 (long soak, hours)
+# The rvs image vendors containers/rvs/conf/<GPU_MODEL>/rvs_level_<RVS_LEVEL>.conf.
+#
+# NOTES
+#  - RVS_LEVEL=5 is a long soak: most actions run ~900 s and power-stress
+#    ~3600 s, so the whole conf takes hours. RVS_TIMEOUT MUST be raised well
+#    above the 1800 s default or the entrypoint kills the run almost
+#    immediately. 43200 (12 h) is a safe ceiling; lower it if you only want
+#    a partial soak.
+#  - GPU_MODEL=amd-mi350x is the REAL SKU here (unlike scratch/rccl.yaml):
+#    amd_models.sh has an RVS-only arm for it, so RVS_CONF resolves to the
+#    vendored MI350X conf. MI350X is CDNA4 (gfx950); the rvs-base image is
+#    built with gfx942;gfx950 so the babel/mem/gst kernels have a code
+#    object for it.
+#  - GPU access via hostPath /dev/kfd + /dev/dri AND the amd.com/gpu device
+#    plugin resource (mirrors scratch/rccl.yaml). No results volume: the
+#    entrypoint tees RVS output to stdout (kubectl logs) and to
+#    /results/rvs.{log,json} on the container's ephemeral layer.
+#  - Set nodeSelector hostname and NODE_ID to your actual MI350X node.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rvs-mi350x-level5
+  labels:
+    app: gpu-droplet-validation-scratch
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: CHANGEME-mi350x-node     # <-- your MI350X node
+  tolerations:
+    - key: amd.com/gpu                       # GPU node taint (DOKS sets an empty value, so match by key)
+      operator: Exists
+      effect: NoSchedule
+    - key: node.kubernetes.io/unschedulable  # node may be cordoned
+      operator: Exists
+      effect: NoSchedule
+  volumes:
+    - name: dev-kfd
+      hostPath: { path: /dev/kfd, type: CharDevice }
+    - name: dev-dri
+      hostPath: { path: /dev/dri, type: Directory }
+  containers:
+    - name: rvs
+      image: ghcr.io/do-solutions/gpu-droplet-validation/rvs:latest
+      imagePullPolicy: Always
+      # Default entrypoint: run RVS once with the vendored conf and exit.
+      securityContext:
+        privileged: true
+        capabilities:
+          add: ["SYS_PTRACE"]
+        seccompProfile:
+          type: Unconfined
+      env:
+        - name: RUN_ID
+          value: "mi350x-rvs-l5-001"
+        - name: GPU_MODEL
+          value: "amd-mi350x"      # real SKU — RVS-only arm in amd_models.sh
+        - name: RVS_LEVEL
+          value: "5"               # 5 = long soak; 4 = quick (~minutes)
+        - name: RVS_TIMEOUT
+          value: "43200"           # 12 h ceiling — see NOTES (default 1800 s is too short for L5)
+        - name: GPU_COUNT
+          value: "8"
+        - name: NODE_ID
+          value: "CHANGEME-mi350x-node"
+        - name: REGION
+          value: ""
+      resources:
+        limits:
+          amd.com/gpu: 8
+      volumeMounts:
+        - name: dev-kfd
+          mountPath: /dev/kfd
+        - name: dev-dri
+          mountPath: /dev/dri

@@ -27,7 +27,7 @@ cd "$REPO_ROOT"
 
 # Pinned versions. ROCM_VER drives both the rocm/dev-ubuntu base tag and the
 # published rvs-base tag; RVS_REF is the exact RVS commit to compile.
-ROCM_VER="${ROCM_VER:-7.0.2}"
+ROCM_VER="${ROCM_VER:-7.2.1}"
 ROCM_IMAGE_TAG="${ROCM_IMAGE_TAG:-${ROCM_VER}-complete}"
 # Pinned to RVS 1.5.37 (git describe v1.5.0-37-g44c0022b), the version
 # proven on the MI325X host: runs the vendored level-4 conf in ~5 min, all
