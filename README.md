@@ -257,10 +257,8 @@ kubectl logs -f job/gdv-<node> -c tap-reporter   # TAP v14 — primary signal
 It is byte-for-byte what `run-k8s.sh ... --print-manifest` emits, so the script
 and standalone paths never drift.
 [`examples/full-suite-nvidia.yaml`](examples/full-suite-nvidia.yaml) is the
-NVIDIA counterpart (`nvidia-b300`); the NVIDIA path is shipped ready but has not
-yet run on real hardware (no B300 available), so treat it as experimental until
-exercised. See [`examples/`](examples/) for the full walkthrough and the one-off
-RVS/RCCL diagnostic manifests.
+NVIDIA counterpart (`nvidia-b300`). See [`examples/`](examples/) for the full
+walkthrough and the one-off RVS/RCCL diagnostic manifests.
 
 ## Layout
 

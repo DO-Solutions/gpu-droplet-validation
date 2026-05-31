@@ -6,12 +6,6 @@
 # initContainers sharing an emptyDir /results; tap-reporter is the main
 # container and emits the TAP v14 verdict.
 #
-# ⚠ EXPERIMENTAL / UNTESTED ON HARDWARE. The k8s path was validated end-to-end
-# on AMD MI350X; the NVIDIA path has NOT yet run on a real GPU node (no B300 was
-# available). It is shipped ready so it can be exercised the moment one is, and
-# fixed in place if anything needs adjusting. The manifest shape, tolerations,
-# and dry-run validation are confirmed; the in-pod behaviour is not.
-#
 # Apply:   kubectl apply -f examples/full-suite-nvidia.yaml
 # Watch:   kubectl logs -f job/gdv-changeme-node -c tap-reporter   # TAP v14 = primary signal
 # Stages:  kubectl logs job/gdv-changeme-node -c dcgm-diag         # any stage by name
