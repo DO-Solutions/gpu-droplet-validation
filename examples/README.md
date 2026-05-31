@@ -3,10 +3,12 @@
 Standalone Kubernetes manifests you can `kubectl apply -f` directly — no
 script, no repo checkout. There are two kinds here:
 
-- **`full-suite-amd.yaml`** is **the calibrated validation run** as a single
-  self-contained Job — the same thing `run-k8s.sh` generates and applies, just
-  checked in so a customer can validate a node by sending one YAML. Use this
-  for a real pass/fail verdict.
+- **`full-suite-amd.yaml`** / **`full-suite-nvidia.yaml`** are the **whole
+  validation suite** as a single self-contained Job — the same thing
+  `run-k8s.sh` generates and applies, just checked in so a customer can validate
+  a node by sending one YAML. Use these for a real pass/fail verdict. The AMD
+  manifest is validated end-to-end on hardware; the NVIDIA one is shipped ready
+  but **not yet run on a real GPU node** (see its header).
 - **`rvs-mi350x-level5.yaml`** and **`rccl-allreduce-adhoc.yaml`** are **one-off
   diagnostics** for exercising GPU types or RVS levels we do not yet fully
   validate. They are **not** the calibrated path — the official flow is
@@ -46,6 +48,32 @@ the `amd.com/gpu` GPU taint **by key** (`operator: Exists`) because DOKS sets it
 with an empty value (`amd.com/gpu=:NoSchedule`). It requires the AMD GPU device
 plugin on the node; if that is absent, regenerate with
 `run-k8s.sh --raw-device-fallback` to hostPath-mount `/dev/kfd` + `/dev/dri`.
+
+## `full-suite-nvidia.yaml` — the NVIDIA suite, no script needed (experimental)
+
+The NVIDIA analogue of `full-suite-amd.yaml`: a complete single-node Job whose
+stages are `prereqs → setup → dcgm-diag → NCCL allreduce/alltoall → teardown`,
+again byte-for-byte what `run-k8s.sh --gpu-model nvidia-b300 ... --print-manifest`
+emits. Requesting `nvidia.com/gpu` requires the **NVIDIA GPU operator** (or
+k8s-device-plugin) on the node; there is no raw-device fallback (that path is
+AMD-specific).
+
+> ⚠ **Untested on hardware.** The k8s path is validated end-to-end on AMD
+> MI350X, but no B300 was available to run the NVIDIA path. The manifest shape,
+> tolerations, and dry-run validation are confirmed; the in-pod behaviour is
+> not. It is shipped ready so it can be exercised — and fixed in place — the
+> moment a B300 node exists.
+
+```bash
+# Retarget first (nodeSelector hostname, NODE_ID env, metadata.name — all CHANGEME).
+kubectl apply -f examples/full-suite-nvidia.yaml
+kubectl logs -f job/gdv-changeme-node -c tap-reporter   # TAP v14 — primary signal
+kubectl delete -f examples/full-suite-nvidia.yaml
+```
+
+`nvidia-b300` is currently the only calibrated NVIDIA SKU; adding another is a
+one-line case arm in `containers/_lib/nvidia_models.sh` (the one NVIDIA image
+set serves every SKU — no manifest change).
 
 ## `rvs-mi350x-level5.yaml` — RVS level-5 soak on one MI350X node
 

@@ -216,7 +216,7 @@ spec:
     spec:
       restartPolicy: Never
 EOF
-  [ "$STAGE_GPU" = 1 ] && echo "      hostIPC: true   # RCCL single-node shared-memory transport"
+  [ "$STAGE_GPU" = 1 ] && echo "      hostIPC: true   # NCCL/RCCL single-node shared-memory transport"
   if [ -n "$IMAGE_PULL_SECRET" ]; then
     printf '      imagePullSecrets:\n        - name: %s\n' "$IMAGE_PULL_SECRET"
   fi
