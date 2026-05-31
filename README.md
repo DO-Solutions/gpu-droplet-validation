@@ -12,6 +12,7 @@ gets TAP v14 on stdout plus artifacts in `./results` (override with
 | `test`         | Mock CPU-only stack used for integration testing             |
 | `nvidia-b300`  | Real B300 SXM6 stack: prereqs + setup + `dcgmi diag -r 3` + NCCL allreduce/alltoall + post-health |
 | `amd-mi325x`   | Real MI325X stack: prereqs + setup + `rvs -c <conf>` (level 4) + RCCL allreduce/alltoall + post-health |
+| `amd-mi350x`   | Real MI350X stack: prereqs + setup + `rvs -c <conf>` (level 4) + RCCL allreduce/alltoall + post-health |
 
 Other `nvidia-*` and `amd-*` SKUs are not yet implemented in the full flow.
 Adding a new NVIDIA SKU is a one-line `case` arm in
@@ -38,8 +39,10 @@ tree ships **levels 4 and 5** for **MI300X, MI325X, MI350X, MI355X**
 Select with `GPU_MODEL` + `RVS_LEVEL` (default `4`); `rvs-base` is built
 for both `gfx942` (CDNA3: MI300X/MI325X) and `gfx950` (CDNA4:
 MI350X/MI355X). This is **one-off only** — the official `run.sh`/compose
-flow remains **`amd-mi325x` level 4 only**, and the extra SKUs have no
-calibrated pass/fail floors (the RVS log is the signal). See
+flow is calibrated for **`amd-mi325x` and `amd-mi350x` (level 4)**, while the
+remaining SKUs (`amd-mi300x`, `amd-mi355x`) have no calibrated pass/fail
+floors (the RVS log is the signal). Running the full flow on an uncalibrated
+SKU still fails fast at `rccl-tests-amd` (unset floor). See
 [`examples/`](examples/) for a ready-to-run Kubernetes manifest (level 5 on
 an MI350X node).
 
@@ -79,6 +82,26 @@ sudo ./run.sh \
   --region    mkc1 \
   --run-id    mi325x-001
 ```
+
+### amd-mi350x example
+
+```bash
+curl -fsSL \
+  "https://github.com/DO-Solutions/gpu-droplet-validation/releases/latest/download/gpu-droplet-validation-latest.tgz" \
+  | tar --no-same-owner -xz
+sudo ./run.sh \
+  --gpu-model amd-mi350x \
+  --gpu-count 8 \
+  --node-id   my-mi350x-droplet \
+  --region    mkc1 \
+  --run-id    mi350x-001
+```
+
+`amd-mi350x` rides the same five AMD containers and device-passthrough path
+as `amd-mi325x` (no container toolkit); only the calibrated floors differ
+(288 GB HBM3E VRAM gate, higher RCCL busbw floors — MI350X is ~24%/16%
+faster than MI325X on allreduce/alltoall). MI350X (CDNA4, `gfx950`) runs the
+`rvs-base`/`rccl-tests` images built for that arch.
 
 The AMD path needs **no** container toolkit — `run.sh` is a no-op for
 `amd-*` (ROCm GPU access is plain `/dev/kfd` + `/dev/dri` device
@@ -210,8 +233,10 @@ scripts/build-rvs-base.sh           # --dry-run to preview
 scripts/build-rccl-tests-base.sh    # --dry-run to preview
 ```
 
-Pinned versions live in each script's header (currently ROCm 7.0.2 to
-match the MI325X droplet). After rebuilding, bump the `FROM` tag in the
+Pinned versions live in each script's header (currently ROCm 7.2.1 —
+required for the MI350X RVS fp4/fp6/bf6 microscaling actions; MI325X must
+be re-validated on 7.2.1 before these images are promoted to production).
+After rebuilding, bump the `FROM` tag in the
 affected `containers/{rvs,prereqs-amd,setup-amd,teardown-amd,rccl-tests-amd}`
 Dockerfiles, then cut a normal release.
 
