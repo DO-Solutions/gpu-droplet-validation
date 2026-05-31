@@ -79,10 +79,13 @@ else
   mark_fail
 fi
 
-# 4. Model regex, matched (case-insensitively) against each GPU's VBIOS
+# 4. Model regex, matched (case-insensitively) against each GPU's firmware
 #    name — the only amd-smi field that carries the real SKU on a VF box.
+#    amd-smi renamed this section across ROCm releases: it is `vbios.name`
+#    on ROCm 7.0.2 (amd-smi 26.0.2) and `ifwi.name` on ROCm 7.2.1, both
+#    reported under `static --vbios`. Coalesce so the check is version-proof.
 vbios_json="$(amd-smi static --vbios --json 2>/dev/null || true)"
-vbios_names="$(echo "$vbios_json" | jq -r '.gpu_data[].vbios.name' 2>/dev/null || true)"
+vbios_names="$(echo "$vbios_json" | jq -r '.gpu_data[] | (.ifwi.name // .vbios.name) // empty' 2>/dev/null || true)"
 model_ok=1
 mismatch_models=""
 if [ -n "$vbios_names" ]; then
