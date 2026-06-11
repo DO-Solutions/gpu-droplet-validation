@@ -10,10 +10,10 @@
 # example deliberately bypasses that entrypoint, so amd_models.sh / GPU_MODEL /
 # floors are never consulted.
 #
-# Apply:   kubectl apply -f examples/rccl-allreduce-adhoc.yaml
+# Apply:   kubectl apply -f k8s/rccl-allreduce-adhoc.yaml
 # Wait:    kubectl wait --for=condition=Ready pod/rccl-allreduce-adhoc --timeout=5m
 # Watch:   kubectl logs -f pod/rccl-allreduce-adhoc        # primary signal (perf table on stdout)
-# Clean:   kubectl delete -f examples/rccl-allreduce-adhoc.yaml
+# Clean:   kubectl delete -f k8s/rccl-allreduce-adhoc.yaml
 #
 # Retarget:
 #  - alltoall instead of allreduce: change the command's binary to
@@ -27,7 +27,7 @@
 #  - hostIPC: true is required — RCCL uses single-node shared-memory transport.
 #  - GPU access here is via the amd.com/gpu device plugin only. If that does not
 #    expose the GPUs (no /dev/kfd access), drop `privileged: true` back in and
-#    add /dev/kfd + /dev/dri hostPath mounts (see examples/rvs-mi350x-level5.yaml).
+#    add /dev/kfd + /dev/dri hostPath mounts (see k8s/rvs-mi350x-level5.yaml).
 #  - Set nodeSelector hostname and NODE_ID to your actual node.
 apiVersion: v1
 kind: Pod

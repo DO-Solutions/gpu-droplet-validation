@@ -6,12 +6,12 @@
 # initContainers sharing an emptyDir /results; tap-reporter is the main
 # container and emits the TAP v14 verdict.
 #
-# Apply:   kubectl apply -f examples/full-suite-nvidia.yaml
+# Apply:   kubectl apply -f k8s/full-suite-nvidia.yaml
 # Watch:   kubectl logs -f job/gdv-changeme-node -c tap-reporter   # TAP v14 = primary signal
 # Stages:  kubectl logs job/gdv-changeme-node -c dcgm-diag         # any stage by name
 # Grab:    POD=$(kubectl get pod -l job-name=gdv-changeme-node -o jsonpath='{.items[0].metadata.name}')
 #          kubectl cp "$POD":/results ./results -c tap-reporter    # full artifacts
-# Clean:   kubectl delete -f examples/full-suite-nvidia.yaml
+# Clean:   kubectl delete -f k8s/full-suite-nvidia.yaml
 #
 # BEFORE APPLYING, retarget to your node (all marked CHANGEME):
 #   - metadata.name + the `job-name`/log references above -> any DNS-safe name
@@ -27,9 +27,9 @@
 #
 # Tolerations match the GPU taint BY KEY (operator: Exists), plus the
 # cordoned-node taint so a suspect node that has been cordoned can still be
-# validated. Requires the NVIDIA GPU operator (or k8s-device-plugin) on the
-# node so `nvidia.com/gpu` resolves and the GPUs are injected; unlike the AMD
-# path there is no raw-device fallback.
+# validated. Requires the NVIDIA GPU device plugin on the node (installed by
+# default on DOKS GPU nodes) so `nvidia.com/gpu` resolves and the GPUs are
+# injected; unlike the AMD path there is no raw-device fallback.
 apiVersion: batch/v1
 kind: Job
 metadata:

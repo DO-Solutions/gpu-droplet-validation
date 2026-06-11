@@ -6,12 +6,12 @@
 # allreduce/alltoall -> teardown) are initContainers sharing an emptyDir
 # /results; tap-reporter is the main container and emits the TAP v14 verdict.
 #
-# Apply:   kubectl apply -f examples/full-suite-amd.yaml
+# Apply:   kubectl apply -f k8s/full-suite-amd.yaml
 # Watch:   kubectl logs -f job/gdv-changeme-node -c tap-reporter   # TAP v14 = primary signal
 # Stages:  kubectl logs job/gdv-changeme-node -c rvs               # any stage by name
 # Grab:    POD=$(kubectl get pod -l job-name=gdv-changeme-node -o jsonpath='{.items[0].metadata.name}')
 #          kubectl cp "$POD":/results ./results -c tap-reporter    # full artifacts
-# Clean:   kubectl delete -f examples/full-suite-amd.yaml
+# Clean:   kubectl delete -f k8s/full-suite-amd.yaml
 #
 # BEFORE APPLYING, retarget to your node (all marked CHANGEME):
 #   - metadata.name + the `job-name`/log references above -> any DNS-safe name
