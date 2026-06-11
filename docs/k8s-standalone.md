@@ -7,11 +7,18 @@ The standalone Kubernetes manifests in [`../k8s/`](../k8s/) let you
   **whole validation suite** as a single self-contained Job, identical to what
   `run-k8s.sh` generates, checked in so a customer can validate a node by
   sending one YAML. Use these for a real pass/fail verdict.
-- **One-off diagnostics** (`rvs-mi350x-level5.yaml` / `rccl-allreduce-adhoc.yaml`)
-  — for exercising GPU types or RVS levels we do not yet fully validate. They
-  are **not** the calibrated path; there are **no pass/fail floors** for the
-  uncalibrated SKUs. The signal is the raw RVS `[RESULT]` stream / RCCL busbw
-  table in the logs.
+- **One-off diagnostics** — a single stage run by itself, no validation chain,
+  no pass/fail floor. They split along the same line for both vendors:
+  - The **collective-perf** Pods (`rccl-allreduce-adhoc.yaml` /
+    `nccl-allreduce-adhoc.yaml`) run the RCCL/NCCL binary **directly** (the image
+    entrypoint is overridden), so there is no floor and no `GPU_MODEL` coupling —
+    they work on any SKU. The signal is the per-size busbw table + the
+    `Avg bus bandwidth` line in the logs. This is the easy "do the GPUs / fabric
+    work at all" check.
+  - The **SKU-specific** Pods (`rvs-mi350x-level5.yaml` / `dcgm-b300-adhoc.yaml`)
+    run RVS or DCGM via the image entrypoint, which needs `GPU_MODEL` to pick the
+    right conf / plugin set. The signal is the raw RVS `[RESULT]` stream / `dcgmi
+    diag` table in the logs.
 
 For the per-TAP-point reference (thresholds, what `ok` vs `not ok` means), see
 [test-suite.md](test-suite.md).
@@ -182,3 +189,93 @@ resolve `RVS_CONF` but set no RCCL floors and disable the VRAM gate, so the full
 `run.sh` flow still fails fast for them. Only `amd-mi325x` (level 4) is
 calibrated end to end. The vendored confs are mirrored verbatim from upstream
 `ROCmValidationSuite/rvs/conf/<MODEL>/levels/`.
+
+## `dcgm-b300-adhoc.yaml` — diagnostic DCGM diag on one NVIDIA node
+
+A standalone Kubernetes Pod that runs the `dcgm-diag` image's **default
+entrypoint** on one node — the NVIDIA analogue of `rvs-mi350x-level5.yaml`,
+running just the DCGM stage in isolation instead of the full
+`prereqs → setup → dcgm-diag → NCCL → teardown` chain.
+
+```bash
+kubectl apply -f k8s/dcgm-b300-adhoc.yaml
+kubectl wait --for=condition=Ready pod/dcgm-b300-adhoc --timeout=5m
+kubectl logs -f pod/dcgm-b300-adhoc              # primary signal (dcgmi diag on stdout)
+
+# optional — pull the artifacts the full flow's parser would consume:
+kubectl cp dcgm-b300-adhoc:/results/dcgm-diag.json     ./dcgm-diag.json      # parsed
+kubectl cp dcgm-b300-adhoc:/results/dcgm-diag_raw.json ./dcgm-diag_raw.json  # verbatim dcgmi -j
+
+kubectl delete -f k8s/dcgm-b300-adhoc.yaml
+```
+
+Before applying, set **`nodeSelector.kubernetes.io/hostname`** and the
+**`NODE_ID`** env to your actual node.
+
+### Fixed plugin set — no level knob
+
+`GPU_MODEL=nvidia-b300` is **required**: the entrypoint sources
+[`../containers/_lib/nvidia_models.sh`](../containers/_lib/nvidia_models.sh),
+which exits on an unset/unknown SKU **and** fixes the plugin selection plus
+per-plugin duration caps. Unlike RVS there is no `RVS_LEVEL`-style knob. The run
+is `dcgmi diag -r "memory,diagnostic,targeted stress,targeted power"` with the
+`diagnostic`/`targeted_stress`/`targeted_power` duration caps, plus the always-on
+`software` deployment check — **~29 min on 8× B300**. This is the same diag the
+full suite runs, just standalone (it launches its own `nv-hostengine`). For the
+per-point thresholds and what each plugin's `not ok` means, see the `nvidia-b300`
+section of [test-suite.md](test-suite.md).
+
+### GPU access
+
+Via the **`nvidia.com/gpu` device plugin only** (installed by default on DOKS
+GPU nodes). Unlike the AMD one-offs there is **no raw-device (`/dev/kfd`)
+fallback** — the NVIDIA runtime injects the devices.
+
+## `nccl-allreduce-adhoc.yaml` — diagnostic NCCL allreduce on one NVIDIA node
+
+A standalone Kubernetes Pod that runs the `nccl-tests-nvidia` image's
+`all_reduce_perf` binary **directly** (overriding the image entrypoint) to
+confirm a node's GPUs / NVLink fabric / config work at all. The NVIDIA analogue
+of `rccl-allreduce-adhoc.yaml` — same strategy, same purpose.
+
+```bash
+kubectl apply -f k8s/nccl-allreduce-adhoc.yaml
+kubectl wait --for=condition=Ready pod/nccl-allreduce-adhoc --timeout=5m
+kubectl logs -f pod/nccl-allreduce-adhoc         # primary signal (perf table on stdout)
+
+kubectl delete -f k8s/nccl-allreduce-adhoc.yaml
+```
+
+Before applying, set **`nodeSelector.kubernetes.io/hostname`** and the
+**`NODE_ID`** env to your actual node.
+
+### Diagnostic only — no floor gate
+
+Because the manifest runs the binary directly, it **bypasses the
+`nccl-tests-nvidia` entrypoint**: there is no `nvidia_models.sh`, no `GPU_MODEL`,
+and **no pass/fail floor** — so it runs on any NVIDIA SKU, not just calibrated
+ones. The signal is the per-size busbw table and the `Avg bus bandwidth` line in
+the logs. For a calibrated pass/fail run (best-of-3 busbw@8GB gated against
+`NCCL_ALLREDUCE_FLOOR=810` GB/s plus the NVLink-transport assertion), use the
+full `run.sh` / compose flow on `nvidia-b300`
+([`../containers/_lib/nvidia_models.sh`](../containers/_lib/nvidia_models.sh)).
+
+### Retargeting
+
+- **alltoall** instead of allreduce: change the command's binary to
+  `/opt/nccl-tests/build/alltoall_perf` (same flags).
+- **different GPU count**: change *both* the command's `-g N` and
+  `resources.limits.nvidia.com/gpu` to `N` — they must match.
+
+The flags mirror exactly what the suite's entrypoint runs:
+`-b 32K -e 8G -f 2 -g 8 -w 5 -n 20`. `hostIPC: true` is required (NCCL
+single-node shared-memory transport), and GPU access is via the `nvidia.com/gpu`
+device plugin only (no raw-device fallback — that path is AMD-specific).
+
+### Binary path stability
+
+The path `/opt/nccl-tests/build/` is fixed by the pinned `nccl-tests` image
+(`ghcr.io/do-solutions/nccl-tests`, an upstream `nvidia/nccl-tests` mirror); it
+only moves on a deliberate base-image refresh. If a future image relocates the
+binary, drop the `command:` override to fall back to the entrypoint's `find_bin`
+(which then also re-applies the floor).

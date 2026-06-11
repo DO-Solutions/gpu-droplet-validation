@@ -98,7 +98,8 @@ kubectl logs -f job/gdv-<node> -c tap-reporter   # TAP v14 — primary signal
 ```
 
 The full walkthrough — retargeting, collecting `/results`, plus the one-off
-RVS/RCCL diagnostic manifests — is in [docs/k8s-standalone.md](docs/k8s-standalone.md).
+diagnostic manifests (AMD RVS/RCCL, NVIDIA DCGM/NCCL) — is in
+[docs/k8s-standalone.md](docs/k8s-standalone.md).
 
 ## stdout / stderr / exit-code contract
 
@@ -135,6 +136,6 @@ through compose.
   under the hood and the per-vendor GPU access path.
 - [docs/test-suite.md](docs/test-suite.md) — per-SKU TAP point reference.
 - [docs/k8s-standalone.md](docs/k8s-standalone.md) — standalone `kubectl apply` manifests
-  and one-off RVS/RCCL diagnostics.
+  and one-off diagnostics (AMD RVS/RCCL, NVIDIA DCGM/NCCL).
 - [docs/development.md](docs/development.md) — repo layout, releasing, out-of-band
   base images, test-family run-id dispatch, adding a SKU.
