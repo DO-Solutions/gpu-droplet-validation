@@ -86,7 +86,7 @@ Runs `alltoall_perf -b 32K -e 8G -f 2 -g 8 -w 5 -n 20` once.
 |---|---|---|
 | `NCCL alltoall_perf exit code == 0` | The binary exited 0 | The alltoall collective could not complete at all (hang, abort, illegal memory access). No SKU-specific bandwidth floor here — failure mode for alltoall on this hardware is binary; bandwidth regressions in allreduce already gate the suite. |
 
-### post-health (5 points) — `containers/teardown-nvidia/entrypoint.sh`
+### post-health (4 points) — `containers/teardown-nvidia/entrypoint.sh`
 
 Compares the post-test machine state against a baseline captured by
 `setup-nvidia` before dcgm-diag/NCCL ran. Designed to catch silent
@@ -94,11 +94,15 @@ regressions induced by the stress phases.
 
 | Test | Threshold / criterion | What `not ok` means |
 |---|---|---|
-| `No new correctable ECC errors` | `ecc.errors.corrected.volatile.total` summed across all GPUs is unchanged from baseline | The stress phases triggered correctable ECC events. By definition the data was recovered, but a non-zero delta is an early warning of degrading memory. |
 | `No new uncorrectable ECC errors` | `ecc.errors.uncorrected.volatile.total` summed across all GPUs is unchanged from baseline | An uncorrectable ECC event occurred during the run. The affected memory is now considered unreliable; this GPU should be quarantined regardless of whether dcgm-diag also flagged it. |
 | `No new Xid errors in dmesg` | Count of `NVRM: Xid` lines in `dmesg -T` is `<=` baseline count | A kernel-level NVIDIA driver fault fired during the run (Xid). The new Xid lines are included in the diagnostic verbatim so the specific Xid number can be looked up. |
 | `No thermal throttling observed` | No `(HW\|SW) (Thermal )?Slowdown : Active` line appears in `nvidia-smi -q -d PERFORMANCE` at post-test time | The card is currently throttling, i.e. the cooling envelope is insufficient at idle/cooldown — typically a fan or thermal-paste failure, not a software issue. |
 | `Row remap status clean` | `nvidia-smi -q -d ROW_REMAPPER` reports `Pending: No` and `Remapping Failure Occurred: No` on every GPU | HBM row remapping is pending or has failed. Pending = remap will happen on next reboot; failed = the GPU has run out of spare rows. Either way the card has memory damage. |
+
+> Correctable ECC errors are recorded but intentionally do **not** fail the
+> suite — they are recovered by hardware. Only an increase in *uncorrectable*
+> ECC errors fails the run. (The correctable-delta check is still in the
+> teardown script, commented out.)
 
 ## `--gpu-model amd-mi325x`
 
@@ -178,17 +182,21 @@ the best by average bus bandwidth.
 |---|---|---|
 | `RCCL alltoall_perf busbw@8GB >= 285 GB/s` | In-place bus bandwidth at the 8 GiB message size from the best of 3 runs is at least **285 GB/s** (or no run produced a parseable Avg bus bandwidth) | The all-to-all collective is not delivering expected bandwidth, or could not complete. Floor calibrated 2026-05-16 across three idle 8× MI325X hosts (min best run 301.67 GB/s, spread <1%). Same diagnostic shape as allreduce. |
 
-### post-health (4 points) — `containers/teardown-amd/entrypoint.sh`
+### post-health (3 points) — `containers/teardown-amd/entrypoint.sh`
 
 Compares post-test state against a baseline captured by `setup-amd`
 before RVS/RCCL ran.
 
 | Test | Threshold / criterion | What `not ok` means |
 |---|---|---|
-| `No new correctable ECC errors` | Summed `corrected` ECC count from `amd-smi metric --ecc` is unchanged from baseline | The stress phases triggered correctable ECC events — early warning of degrading memory. |
 | `No new uncorrectable ECC errors` | Summed `uncorrected` ECC count is unchanged from baseline | An uncorrectable ECC event occurred during the run; the affected memory is unreliable and the GPU should be quarantined. |
 | `No new amdgpu faults in dmesg` | Count of `amdgpu` lines in `dmesg -T` is `<=` baseline count | A kernel-level amdgpu fault fired during the run. The new lines are included verbatim in the diagnostic. |
 | `No thermal throttling observed` | No active throttle/PVIOL/thermal status in `amd-smi metric` at post-test time | The card is throttling at cooldown — cooling/power envelope inadequate, typically a hardware (fan/thermal) fault. |
+
+> Correctable ECC errors are recorded but intentionally do **not** fail the
+> suite — they are recovered by hardware. Only an increase in *uncorrectable*
+> ECC errors fails the run. (The correctable-delta check is still in the
+> teardown script, commented out.)
 
 ## Reading a TAP failure
 
