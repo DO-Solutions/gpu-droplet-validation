@@ -40,13 +40,19 @@ delta="$(jq -n \
 d_corr_total="$(echo "$delta" | jq '[.[] | .d_corrected]   | add // 0')"
 d_uncorr_total="$(echo "$delta" | jq '[.[] | .d_uncorrected] | add // 0')"
 
-if [ "$d_corr_total" = "0" ]; then
-  add_test true "No new correctable ECC errors" "null"
-else
-  add_test false "No new correctable ECC errors" \
-    "$(echo "$delta" | jq --argjson n "$d_corr_total" \
-        '{ message: "\($n) new correctable ECC error(s) across all GPUs since baseline", delta_corrected_total: $n, per_gpu: . }')"
-fi
+# Correctable ECC errors do NOT fail the suite: they are recovered by hardware
+# by definition, so a correctable delta alone is not sufficient to fail the
+# test suite. Only an increase in UNCORRECTABLE errors (below) indicates
+# unreliable memory. The correctable delta ($d_corr_total) is still computed
+# above and could be surfaced as a diagnostic later if we want an early-warning
+# signal; the test point is intentionally disabled, not deleted.
+# if [ "$d_corr_total" = "0" ]; then
+#   add_test true "No new correctable ECC errors" "null"
+# else
+#   add_test false "No new correctable ECC errors" \
+#     "$(echo "$delta" | jq --argjson n "$d_corr_total" \
+#         '{ message: "\($n) new correctable ECC error(s) across all GPUs since baseline", delta_corrected_total: $n, per_gpu: . }')"
+# fi
 
 if [ "$d_uncorr_total" = "0" ]; then
   add_test true "No new uncorrectable ECC errors" "null"

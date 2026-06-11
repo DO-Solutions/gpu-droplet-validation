@@ -9,7 +9,6 @@ source /lib/result.sh
 write_result_json post-health /results/post-health.json '{
   suite: $suite,
   tests: [
-    { ok: true, name: "No new correctable ECC errors (mock)",   diagnostic: null },
     { ok: true, name: "No new uncorrectable ECC errors (mock)", diagnostic: null },
     { ok: true, name: "No new Xid errors in dmesg (mock)",      diagnostic: null },
     { ok: true, name: "No thermal throttling observed (mock)",  diagnostic: null },
