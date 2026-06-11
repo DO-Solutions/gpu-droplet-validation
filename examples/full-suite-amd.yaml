@@ -1,0 +1,254 @@
+# The complete, calibrated AMD validation suite as ONE self-contained
+# single-node Job — no script, no repo checkout, no Helm. This is the same
+# manifest run-k8s.sh generates and applies (`run-k8s.sh ... --print-manifest`);
+# it is checked in so a customer can validate a node with a single
+# `kubectl apply -f`. The serial stages (prereqs -> setup -> rvs -> RCCL
+# allreduce/alltoall -> teardown) are initContainers sharing an emptyDir
+# /results; tap-reporter is the main container and emits the TAP v14 verdict.
+#
+# Apply:   kubectl apply -f examples/full-suite-amd.yaml
+# Watch:   kubectl logs -f job/gdv-changeme-node -c tap-reporter   # TAP v14 = primary signal
+# Stages:  kubectl logs job/gdv-changeme-node -c rvs               # any stage by name
+# Grab:    POD=$(kubectl get pod -l job-name=gdv-changeme-node -o jsonpath='{.items[0].metadata.name}')
+#          kubectl cp "$POD":/results ./results -c tap-reporter    # full artifacts
+# Clean:   kubectl delete -f examples/full-suite-amd.yaml
+#
+# BEFORE APPLYING, retarget to your node (all marked CHANGEME):
+#   - metadata.name + the `job-name`/log references above -> any DNS-safe name
+#   - spec.template.spec.nodeSelector.kubernetes.io/hostname -> your node name
+#   - the NODE_ID env on every container                     -> your node name
+#   - RUN_ID env                                             -> your run id
+#
+# To target a different AMD SKU, change GPU_MODEL on every container and the
+# GPU count in BOTH places it appears per stage (the env GPU_COUNT and
+# resources.limits."amd.com/gpu"). amd-mi300x / amd-mi325x / amd-mi350x /
+# amd-mi355x all share this one image set; per-SKU thresholds resolve inside
+# the containers from $GPU_MODEL. (Regenerate instead of hand-editing with:
+# `./run-k8s.sh --gpu-model <sku> --gpu-count <n> --target-nodes <node> \
+#   --run-id <id> --print-manifest`.)
+#
+# Tolerations match the GPU taint BY KEY (operator: Exists): DOKS taints GPU
+# nodes `amd.com/gpu=:NoSchedule` with an EMPTY value, which an Equal/value
+# toleration would never match. The cordoned-node taint is tolerated too so a
+# suspect node that has been cordoned can still be validated.
+#
+# Requires the AMD GPU device plugin on the node (it injects /dev/kfd +
+# /dev/dri when amd.com/gpu is requested; prereqs-amd hard-fails otherwise).
+# If it does not, generate a fallback variant with run-k8s.sh's
+# --raw-device-fallback flag, which hostPath-mounts the device nodes.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gdv-changeme-node
+  labels:
+    app.kubernetes.io/name: gpu-droplet-validation
+    app.kubernetes.io/instance: gdv
+    app.kubernetes.io/managed-by: run-k8s.sh
+    gdv/gpu-model: "amd-mi350x"
+    gdv/node: "CHANGEME-node"
+spec:
+  backoffLimit: 0                 # exit 1 is a valid result; never retry
+  ttlSecondsAfterFinished: 3600   # window for run-k8s.sh to collect /results
+  activeDeadlineSeconds: 7200     # whole-suite wall-clock guard
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gpu-droplet-validation
+        app.kubernetes.io/instance: gdv
+        gdv/node: "CHANGEME-node"
+    spec:
+      restartPolicy: Never
+      hostIPC: true   # NCCL/RCCL single-node shared-memory transport
+      nodeSelector:
+        kubernetes.io/hostname: CHANGEME-node
+      tolerations:
+        - key: amd.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: node.kubernetes.io/unschedulable
+          operator: Exists
+          effect: NoSchedule
+      volumes:
+        - name: results
+          emptyDir: {}
+      initContainers:
+        - name: prereqs
+          image: ghcr.io/do-solutions/gpu-droplet-validation/prereqs-amd:latest
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_PTRACE"]
+            seccompProfile:
+              type: Unconfined
+          env:
+            - name: RUN_ID
+              value: "mi350x-example-changeme-node"
+            - name: GPU_MODEL
+              value: "amd-mi350x"
+            - name: GPU_COUNT
+              value: "8"
+            - name: NODE_ID
+              value: "CHANGEME-node"
+            - name: REGION
+              value: ""
+          resources:
+            limits:
+              "amd.com/gpu": 8
+          volumeMounts:
+            - name: results
+              mountPath: /results
+        - name: setup
+          image: ghcr.io/do-solutions/gpu-droplet-validation/setup-amd:latest
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_PTRACE"]
+            seccompProfile:
+              type: Unconfined
+          env:
+            - name: RUN_ID
+              value: "mi350x-example-changeme-node"
+            - name: GPU_MODEL
+              value: "amd-mi350x"
+            - name: GPU_COUNT
+              value: "8"
+            - name: NODE_ID
+              value: "CHANGEME-node"
+            - name: REGION
+              value: ""
+          resources:
+            limits:
+              "amd.com/gpu": 8
+          volumeMounts:
+            - name: results
+              mountPath: /results
+        - name: rvs
+          image: ghcr.io/do-solutions/gpu-droplet-validation/rvs:latest
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_PTRACE"]
+            seccompProfile:
+              type: Unconfined
+          env:
+            - name: RUN_ID
+              value: "mi350x-example-changeme-node"
+            - name: GPU_MODEL
+              value: "amd-mi350x"
+            - name: GPU_COUNT
+              value: "8"
+            - name: NODE_ID
+              value: "CHANGEME-node"
+            - name: REGION
+              value: ""
+            - name: RVS_TIMEOUT
+              value: ""
+          resources:
+            limits:
+              "amd.com/gpu": 8
+          volumeMounts:
+            - name: results
+              mountPath: /results
+        - name: rccl-allreduce
+          image: ghcr.io/do-solutions/gpu-droplet-validation/rccl-tests-amd:latest
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_PTRACE"]
+            seccompProfile:
+              type: Unconfined
+          env:
+            - name: RUN_ID
+              value: "mi350x-example-changeme-node"
+            - name: GPU_MODEL
+              value: "amd-mi350x"
+            - name: GPU_COUNT
+              value: "8"
+            - name: NODE_ID
+              value: "CHANGEME-node"
+            - name: REGION
+              value: ""
+            - name: RCCL_TEST
+              value: "allreduce"
+          resources:
+            limits:
+              "amd.com/gpu": 8
+          volumeMounts:
+            - name: results
+              mountPath: /results
+        - name: rccl-alltoall
+          image: ghcr.io/do-solutions/gpu-droplet-validation/rccl-tests-amd:latest
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_PTRACE"]
+            seccompProfile:
+              type: Unconfined
+          env:
+            - name: RUN_ID
+              value: "mi350x-example-changeme-node"
+            - name: GPU_MODEL
+              value: "amd-mi350x"
+            - name: GPU_COUNT
+              value: "8"
+            - name: NODE_ID
+              value: "CHANGEME-node"
+            - name: REGION
+              value: ""
+            - name: RCCL_TEST
+              value: "alltoall"
+          resources:
+            limits:
+              "amd.com/gpu": 8
+          volumeMounts:
+            - name: results
+              mountPath: /results
+        - name: teardown
+          image: ghcr.io/do-solutions/gpu-droplet-validation/teardown-amd:latest
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_PTRACE"]
+            seccompProfile:
+              type: Unconfined
+          env:
+            - name: RUN_ID
+              value: "mi350x-example-changeme-node"
+            - name: GPU_MODEL
+              value: "amd-mi350x"
+            - name: GPU_COUNT
+              value: "8"
+            - name: NODE_ID
+              value: "CHANGEME-node"
+            - name: REGION
+              value: ""
+          resources:
+            limits:
+              "amd.com/gpu": 8
+          volumeMounts:
+            - name: results
+              mountPath: /results
+      containers:
+        - name: tap-reporter
+          image: ghcr.io/do-solutions/gpu-droplet-validation/tap-reporter:latest
+          imagePullPolicy: Always
+          env:
+            - name: RUN_ID
+              value: "mi350x-example-changeme-node"
+            - name: GPU_MODEL
+              value: "amd-mi350x"
+            - name: GPU_COUNT
+              value: "8"
+            - name: NODE_ID
+              value: "CHANGEME-node"
+            - name: REGION
+              value: ""
+          volumeMounts:
+            - name: results
+              mountPath: /results

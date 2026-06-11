@@ -1,0 +1,246 @@
+# The complete NVIDIA validation suite as ONE self-contained single-node Job —
+# no script, no repo checkout, no Helm. The NVIDIA analogue of
+# full-suite-amd.yaml, and the same thing run-k8s.sh generates and applies
+# (`run-k8s.sh --gpu-model nvidia-b300 ... --print-manifest`). The serial stages
+# (prereqs -> setup -> dcgm-diag -> NCCL allreduce/alltoall -> teardown) are
+# initContainers sharing an emptyDir /results; tap-reporter is the main
+# container and emits the TAP v14 verdict.
+#
+# Apply:   kubectl apply -f examples/full-suite-nvidia.yaml
+# Watch:   kubectl logs -f job/gdv-changeme-node -c tap-reporter   # TAP v14 = primary signal
+# Stages:  kubectl logs job/gdv-changeme-node -c dcgm-diag         # any stage by name
+# Grab:    POD=$(kubectl get pod -l job-name=gdv-changeme-node -o jsonpath='{.items[0].metadata.name}')
+#          kubectl cp "$POD":/results ./results -c tap-reporter    # full artifacts
+# Clean:   kubectl delete -f examples/full-suite-nvidia.yaml
+#
+# BEFORE APPLYING, retarget to your node (all marked CHANGEME):
+#   - metadata.name + the `job-name`/log references above -> any DNS-safe name
+#   - spec.template.spec.nodeSelector.kubernetes.io/hostname -> your node name
+#   - the NODE_ID env on every container                     -> your node name
+#   - RUN_ID env                                             -> your run id
+#
+# nvidia-b300 is currently the only calibrated NVIDIA SKU; adding another is a
+# one-line case arm in containers/_lib/nvidia_models.sh (no image/manifest
+# change — the one nvidia image set serves every SKU). To regenerate instead of
+# hand-editing: `./run-k8s.sh --gpu-model nvidia-b300 --gpu-count <n>
+# --target-nodes <node> --run-id <id> --print-manifest`.
+#
+# Tolerations match the GPU taint BY KEY (operator: Exists), plus the
+# cordoned-node taint so a suspect node that has been cordoned can still be
+# validated. Requires the NVIDIA GPU operator (or k8s-device-plugin) on the
+# node so `nvidia.com/gpu` resolves and the GPUs are injected; unlike the AMD
+# path there is no raw-device fallback.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gdv-changeme-node
+  labels:
+    app.kubernetes.io/name: gpu-droplet-validation
+    app.kubernetes.io/instance: gdv
+    app.kubernetes.io/managed-by: run-k8s.sh
+    gdv/gpu-model: "nvidia-b300"
+    gdv/node: "CHANGEME-node"
+spec:
+  backoffLimit: 0                 # exit 1 is a valid result; never retry
+  ttlSecondsAfterFinished: 3600   # window for run-k8s.sh to collect /results
+  activeDeadlineSeconds: 7200     # whole-suite wall-clock guard
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gpu-droplet-validation
+        app.kubernetes.io/instance: gdv
+        gdv/node: "CHANGEME-node"
+    spec:
+      restartPolicy: Never
+      hostIPC: true   # NCCL/RCCL single-node shared-memory transport
+      nodeSelector:
+        kubernetes.io/hostname: CHANGEME-node
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: node.kubernetes.io/unschedulable
+          operator: Exists
+          effect: NoSchedule
+      volumes:
+        - name: results
+          emptyDir: {}
+      initContainers:
+        - name: prereqs
+          image: ghcr.io/do-solutions/gpu-droplet-validation/prereqs-nvidia:latest
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_PTRACE"]
+            seccompProfile:
+              type: Unconfined
+          env:
+            - name: RUN_ID
+              value: "b300-example-changeme-node"
+            - name: GPU_MODEL
+              value: "nvidia-b300"
+            - name: GPU_COUNT
+              value: "8"
+            - name: NODE_ID
+              value: "CHANGEME-node"
+            - name: REGION
+              value: ""
+          resources:
+            limits:
+              "nvidia.com/gpu": 8
+          volumeMounts:
+            - name: results
+              mountPath: /results
+        - name: setup
+          image: ghcr.io/do-solutions/gpu-droplet-validation/setup-nvidia:latest
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_PTRACE"]
+            seccompProfile:
+              type: Unconfined
+          env:
+            - name: RUN_ID
+              value: "b300-example-changeme-node"
+            - name: GPU_MODEL
+              value: "nvidia-b300"
+            - name: GPU_COUNT
+              value: "8"
+            - name: NODE_ID
+              value: "CHANGEME-node"
+            - name: REGION
+              value: ""
+          resources:
+            limits:
+              "nvidia.com/gpu": 8
+          volumeMounts:
+            - name: results
+              mountPath: /results
+        - name: dcgm-diag
+          image: ghcr.io/do-solutions/gpu-droplet-validation/dcgm-diag:latest
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_PTRACE"]
+            seccompProfile:
+              type: Unconfined
+          env:
+            - name: RUN_ID
+              value: "b300-example-changeme-node"
+            - name: GPU_MODEL
+              value: "nvidia-b300"
+            - name: GPU_COUNT
+              value: "8"
+            - name: NODE_ID
+              value: "CHANGEME-node"
+            - name: REGION
+              value: ""
+          resources:
+            limits:
+              "nvidia.com/gpu": 8
+          volumeMounts:
+            - name: results
+              mountPath: /results
+        - name: nccl-allreduce
+          image: ghcr.io/do-solutions/gpu-droplet-validation/nccl-tests-nvidia:latest
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_PTRACE"]
+            seccompProfile:
+              type: Unconfined
+          env:
+            - name: RUN_ID
+              value: "b300-example-changeme-node"
+            - name: GPU_MODEL
+              value: "nvidia-b300"
+            - name: GPU_COUNT
+              value: "8"
+            - name: NODE_ID
+              value: "CHANGEME-node"
+            - name: REGION
+              value: ""
+            - name: NCCL_TEST
+              value: "allreduce"
+          resources:
+            limits:
+              "nvidia.com/gpu": 8
+          volumeMounts:
+            - name: results
+              mountPath: /results
+        - name: nccl-alltoall
+          image: ghcr.io/do-solutions/gpu-droplet-validation/nccl-tests-nvidia:latest
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_PTRACE"]
+            seccompProfile:
+              type: Unconfined
+          env:
+            - name: RUN_ID
+              value: "b300-example-changeme-node"
+            - name: GPU_MODEL
+              value: "nvidia-b300"
+            - name: GPU_COUNT
+              value: "8"
+            - name: NODE_ID
+              value: "CHANGEME-node"
+            - name: REGION
+              value: ""
+            - name: NCCL_TEST
+              value: "alltoall"
+          resources:
+            limits:
+              "nvidia.com/gpu": 8
+          volumeMounts:
+            - name: results
+              mountPath: /results
+        - name: teardown
+          image: ghcr.io/do-solutions/gpu-droplet-validation/teardown-nvidia:latest
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_PTRACE"]
+            seccompProfile:
+              type: Unconfined
+          env:
+            - name: RUN_ID
+              value: "b300-example-changeme-node"
+            - name: GPU_MODEL
+              value: "nvidia-b300"
+            - name: GPU_COUNT
+              value: "8"
+            - name: NODE_ID
+              value: "CHANGEME-node"
+            - name: REGION
+              value: ""
+          resources:
+            limits:
+              "nvidia.com/gpu": 8
+          volumeMounts:
+            - name: results
+              mountPath: /results
+      containers:
+        - name: tap-reporter
+          image: ghcr.io/do-solutions/gpu-droplet-validation/tap-reporter:latest
+          imagePullPolicy: Always
+          env:
+            - name: RUN_ID
+              value: "b300-example-changeme-node"
+            - name: GPU_MODEL
+              value: "nvidia-b300"
+            - name: GPU_COUNT
+              value: "8"
+            - name: NODE_ID
+              value: "CHANGEME-node"
+            - name: REGION
+              value: ""
+          volumeMounts:
+            - name: results
+              mountPath: /results

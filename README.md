@@ -184,6 +184,82 @@ was produced; `255` is reserved for "the suite could not run at all."
 
 Anything else is treated as `pass-*`.
 
+## Kubernetes path
+
+The suite also runs on Kubernetes using the **same images, entrypoints and
+`/results` TAP v14 contract** — only the orchestration differs. Each targeted
+node gets one self-contained **single-node Job**: the serial stages
+(prereqs → setup → rvs/dcgm → collectives → teardown) are sequential
+`initContainers` sharing an `emptyDir` `/results`, and `tap-reporter` is the
+main container. "Multi-node" means *N independent single-node Jobs* run
+concurrently — there is no cross-node coordination. There is no Helm chart:
+`run-k8s.sh` generates each Job's YAML and `kubectl apply`s it — the "run.sh of
+Kubernetes."
+
+GPUs are requested via device-plugin resources (`amd.com/gpu` /
+`nvidia.com/gpu`), so the **AMD GPU device plugin** (or NVIDIA GPU operator)
+must already be installed on the GPU nodes. The Pod tolerates the model's GPU
+taint **by key** (`operator: Exists`) — DOKS taints GPU nodes
+`amd.com/gpu=:NoSchedule` with an *empty* value, which an `Equal`/`value`
+toleration would never match — plus the cordoned-node taint
+(`node.kubernetes.io/unschedulable`) so a suspect node that has been cordoned
+can still be validated; add org-specific taints with `--toleration`.
+
+### Driving it with the script
+
+```bash
+curl -fsSL \
+  "https://github.com/DO-Solutions/gpu-droplet-validation/releases/latest/download/gpu-droplet-validation-latest.tgz" \
+  | tar --no-same-owner -xz
+
+# one node
+./run-k8s.sh --gpu-model amd-mi325x --gpu-count 8 \
+  --region mkc1 --run-id mi325x-001 --target-nodes mi325x-a
+
+# several nodes at once (independent single-node runs)
+./run-k8s.sh --gpu-model amd-mi325x --gpu-count 8 --target-nodes mi325x-a,mi325x-b,mi325x-c
+
+# every node matching a label
+./run-k8s.sh --gpu-model amd-mi325x --gpu-count 8 --node-label gpu.amd.com/present=true
+
+# CPU-only mock — validates the k8s path itself on any cluster
+./run-k8s.sh --gpu-model test --gpu-count 8 --run-id pass-ci-001
+```
+
+`run-k8s.sh` fans out one Job per target node, collects each node's TAP from
+its `tap-reporter` logs, and preserves run.sh's exit contract aggregated across
+nodes: `0` all nodes ran and all ok, `1` some node had a `not ok` point, `255`
+a node could not run. Per-node TAP lands in `results/<node>/output.tap`.
+
+If the AMD GPU device plugin does not inject `/dev/kfd` + `/dev/dri` (the
+`prereqs-amd` check hard-fails), pass `--raw-device-fallback` to hostPath-mount
+the device nodes exactly like compose. Verify device-plugin sufficiency first
+with a one-off `amd.com/gpu`-only pod: `ls -l /dev/kfd /dev/dri && amd-smi list`.
+
+ghcr packages are public, so no image pull secret is needed;
+`--image-pull-secret` is an optional escape hatch only if they are ever made
+private.
+
+### Without the script — one standalone manifest
+
+`run-k8s.sh` is only a generator; the Job it produces is plain YAML. For a
+single node, [`examples/full-suite-amd.yaml`](examples/full-suite-amd.yaml) is
+that exact manifest checked in, so a customer can validate a node with one
+`kubectl apply -f` — no script, no repo checkout, sending one file is the whole
+lift. Edit the marked `nodeSelector` hostname / `NODE_ID` / `GPU_MODEL` to
+retarget, then:
+
+```bash
+kubectl apply -f examples/full-suite-amd.yaml
+kubectl logs -f job/gdv-<node> -c tap-reporter   # TAP v14 — primary signal
+```
+
+It is byte-for-byte what `run-k8s.sh ... --print-manifest` emits, so the script
+and standalone paths never drift.
+[`examples/full-suite-nvidia.yaml`](examples/full-suite-nvidia.yaml) is the
+NVIDIA counterpart (`nvidia-b300`). See [`examples/`](examples/) for the full
+walkthrough and the one-off RVS/RCCL diagnostic manifests.
+
 ## Layout
 
 - `run.sh` — entrypoint, shipped inside the release tarball.
@@ -195,8 +271,13 @@ Anything else is treated as `pass-*`.
 - `containers/_lib/result.sh` — shell helpers (`log`, `die`,
   `write_result_json`) sourced by each entrypoint.
 - `scripts/release.sh` — builds + pushes every image and packages a single
-  unified tarball (`run.sh` + all `compose.*.yaml` + `VERSION`) under one
-  version tag, publishes to GitHub Releases.
+  unified tarball (`run.sh` + `run-k8s.sh` + all `compose.*.yaml` + `examples/`
+  + `VERSION`) under one version tag, publishes to GitHub Releases.
+- `run-k8s.sh` — Kubernetes entrypoint: generates one single-node Job manifest
+  per target node and `kubectl apply`s it (no Helm), same images/results
+  contract as compose. Shipped inside the release tarball alongside `run.sh`.
+- `examples/` — standalone `kubectl apply -f` manifests: the calibrated
+  full-suite Job (`full-suite-amd.yaml`) plus one-off RVS/RCCL diagnostics.
 
 Images are published to `ghcr.io/do-solutions/gpu-droplet-validation/<name>`
 with both `:$VERSION` and `:latest` tags on every release.
