@@ -1,20 +1,22 @@
-# examples/
+# Standalone & one-off runs
 
-Standalone Kubernetes manifests you can `kubectl apply -f` directly — no
-script, no repo checkout. There are two kinds here:
+The standalone Kubernetes manifests in [`../k8s/`](../k8s/) let you
+`kubectl apply -f` directly — no script, no repo checkout. There are two kinds:
 
-- **`full-suite-amd.yaml`** / **`full-suite-nvidia.yaml`** are the **whole
-  validation suite** as a single self-contained Job — the same thing
-  `run-k8s.sh` generates and applies, just checked in so a customer can validate
-  a node by sending one YAML. Use these for a real pass/fail verdict.
-- **`rvs-mi350x-level5.yaml`** and **`rccl-allreduce-adhoc.yaml`** are **one-off
-  diagnostics** for exercising GPU types or RVS levels we do not yet fully
-  validate. They are **not** the calibrated path — the official flow is
-  `amd-mi325x`/`amd-mi350x` at RVS level 4 only, and there are **no pass/fail
-  floors** for the other SKUs. The signal there is the raw RVS `[RESULT]`
-  stream / RCCL busbw table in the logs.
+- **Full-suite Jobs** (`full-suite-amd.yaml` / `full-suite-nvidia.yaml`) — the
+  **whole validation suite** as a single self-contained Job, identical to what
+  `run-k8s.sh` generates, checked in so a customer can validate a node by
+  sending one YAML. Use these for a real pass/fail verdict.
+- **One-off diagnostics** (`rvs-mi350x-level5.yaml` / `rccl-allreduce-adhoc.yaml`)
+  — for exercising GPU types or RVS levels we do not yet fully validate. They
+  are **not** the calibrated path; there are **no pass/fail floors** for the
+  uncalibrated SKUs. The signal is the raw RVS `[RESULT]` stream / RCCL busbw
+  table in the logs.
 
-## `full-suite-amd.yaml` — the calibrated single-node run, no script needed
+For the per-TAP-point reference (thresholds, what `ok` vs `not ok` means), see
+[test-suite.md](test-suite.md).
+
+## `full-suite-amd.yaml` — calibrated single-node run, no script needed
 
 A complete single-node Job: the serial validation stages
 (prereqs → setup → rvs → RCCL allreduce/alltoall → teardown) are
@@ -29,14 +31,14 @@ is the no-script option when sending one file is easier than shipping the repo.
 # Retarget first: set nodeSelector kubernetes.io/hostname, the NODE_ID env, and
 # the metadata.name (all marked CHANGEME). For another AMD SKU, also change
 # GPU_MODEL + the gpu count (env GPU_COUNT and resources.limits."amd.com/gpu").
-kubectl apply -f examples/full-suite-amd.yaml
+kubectl apply -f k8s/full-suite-amd.yaml
 kubectl logs -f job/gdv-changeme-node -c tap-reporter   # TAP v14 — primary signal
 
 # pull the full artifact set the compose flow would also produce:
 POD=$(kubectl get pod -l job-name=gdv-changeme-node -o jsonpath='{.items[0].metadata.name}')
 kubectl cp "$POD":/results ./results -c tap-reporter
 
-kubectl delete -f examples/full-suite-amd.yaml
+kubectl delete -f k8s/full-suite-amd.yaml
 ```
 
 `amd-mi300x` · `amd-mi325x` · `amd-mi350x` · `amd-mi355x` all share this one
@@ -52,28 +54,50 @@ plugin on the node; if that is absent, regenerate with
 The NVIDIA analogue of `full-suite-amd.yaml`: a complete single-node Job whose
 stages are `prereqs → setup → dcgm-diag → NCCL allreduce/alltoall → teardown`,
 again byte-for-byte what `run-k8s.sh --gpu-model nvidia-b300 ... --print-manifest`
-emits. Requesting `nvidia.com/gpu` requires the **NVIDIA GPU operator** (or
-k8s-device-plugin) on the node; there is no raw-device fallback (that path is
-AMD-specific).
+emits. Requesting `nvidia.com/gpu` requires the **NVIDIA GPU device plugin**
+on the node (installed by default on DOKS GPU nodes); there is no raw-device
+fallback (that path is AMD-specific).
 
 ```bash
 # Retarget first (nodeSelector hostname, NODE_ID env, metadata.name — all CHANGEME).
-kubectl apply -f examples/full-suite-nvidia.yaml
+kubectl apply -f k8s/full-suite-nvidia.yaml
 kubectl logs -f job/gdv-changeme-node -c tap-reporter   # TAP v14 — primary signal
-kubectl delete -f examples/full-suite-nvidia.yaml
+kubectl delete -f k8s/full-suite-nvidia.yaml
 ```
 
 `nvidia-b300` is currently the only calibrated NVIDIA SKU; adding another is a
-one-line case arm in `containers/_lib/nvidia_models.sh` (the one NVIDIA image
-set serves every SKU — no manifest change).
+one-line case arm in [`../containers/_lib/nvidia_models.sh`](../containers/_lib/nvidia_models.sh)
+(the one NVIDIA image set serves every SKU — no manifest change).
 
-## `rvs-mi350x-level5.yaml` — RVS level-5 soak on one MI350X node
+## RVS standalone (one-off)
+
+Separate from the full flow, the `rvs` container can run RVS by itself for AMD
+GPU types we do not yet fully validate. The vendored conf tree ships **levels 4
+and 5** for **MI300X, MI325X, MI350X, MI355X** (mirrored verbatim from upstream
+`ROCmValidationSuite/rvs/conf/<MODEL>/levels/`):
+
+| `GPU_MODEL`   | level 4 (default) | level 5 (long soak, hours) |
+| ------------- | :---------------: | :------------------------: |
+| `amd-mi300x`  | ✔ | ✔ |
+| `amd-mi325x`  | ✔ | ✔ |
+| `amd-mi350x`  | ✔ | ✔ |
+| `amd-mi355x`  | ✔ | ✔ |
+
+Select with `GPU_MODEL` + `RVS_LEVEL` (default `4`); `rvs-base` is built for
+both `gfx942` (CDNA3: MI300X/MI325X) and `gfx950` (CDNA4: MI350X/MI355X). This
+is **one-off only** — the official `run.sh`/compose flow is calibrated for
+**`amd-mi325x` and `amd-mi350x` (level 4)**, while the remaining SKUs
+(`amd-mi300x`, `amd-mi355x`) have no calibrated pass/fail floors (the RVS log is
+the signal). Running the full flow on an uncalibrated SKU still fails fast at
+`rccl-tests-amd` (unset floor).
+
+### `rvs-mi350x-level5.yaml` — RVS level-5 soak on one MI350X node
 
 A standalone Kubernetes Pod that runs the `rvs` container's vendored
-`rvs_level_5.conf` for MI350X. Modeled on `scratch/rccl.yaml`.
+`rvs_level_5.conf` for MI350X.
 
 ```bash
-kubectl apply -f examples/rvs-mi350x-level5.yaml
+kubectl apply -f k8s/rvs-mi350x-level5.yaml
 kubectl wait --for=condition=Ready pod/rvs-mi350x-level5 --timeout=5m
 kubectl logs -f pod/rvs-mi350x-level5            # primary signal (RVS tees to stdout)
 
@@ -81,13 +105,13 @@ kubectl logs -f pod/rvs-mi350x-level5            # primary signal (RVS tees to s
 kubectl cp rvs-mi350x-level5:/results/rvs.json ./rvs.json
 kubectl cp rvs-mi350x-level5:/results/rvs.log  ./rvs.log
 
-kubectl delete -f examples/rvs-mi350x-level5.yaml
+kubectl delete -f k8s/rvs-mi350x-level5.yaml
 ```
 
 Before applying, set **`nodeSelector.kubernetes.io/hostname`** and the
 **`NODE_ID`** env to your actual MI350X node.
 
-### Retargeting to another SKU / level
+#### Retargeting to another SKU / level
 
 The one manifest covers every vendored combination — edit two env vars:
 
@@ -99,7 +123,7 @@ The one manifest covers every vendored combination — edit two env vars:
 The image vendors `containers/rvs/conf/<GPU_MODEL>/rvs_level_<RVS_LEVEL>.conf`;
 `amd_models.sh` resolves it from these two vars.
 
-### Level 4 vs level 5
+#### Level 4 vs level 5
 
 Level 5 is a long-duration soak of the same actions, not new ones:
 
@@ -117,15 +141,14 @@ level-5 run almost immediately. Lower it for a deliberately partial soak.
 
 A standalone Kubernetes Pod that runs the `rccl-tests-amd` image's
 `all_reduce_perf` binary **directly** (overriding the image entrypoint) to
-confirm a node's GPUs / fabric / config work at all. Modeled on
-`scratch/rccl.yaml`.
+confirm a node's GPUs / fabric / config work at all.
 
 ```bash
-kubectl apply -f examples/rccl-allreduce-adhoc.yaml
+kubectl apply -f k8s/rccl-allreduce-adhoc.yaml
 kubectl wait --for=condition=Ready pod/rccl-allreduce-adhoc --timeout=5m
 kubectl logs -f pod/rccl-allreduce-adhoc         # primary signal (perf table on stdout)
 
-kubectl delete -f examples/rccl-allreduce-adhoc.yaml
+kubectl delete -f k8s/rccl-allreduce-adhoc.yaml
 ```
 
 Before applying, set **`nodeSelector.kubernetes.io/hostname`** and the
@@ -139,7 +162,7 @@ Because the manifest runs the binary directly, it **bypasses the
 `Avg bus bandwidth` line in the logs. For a calibrated pass/fail run, use the
 full `run.sh` / compose flow on `amd-mi325x`, where the entrypoint gates
 best-of-3 busbw@8GB against `RCCL_ALLREDUCE_FLOOR=300` GB/s
-(`containers/_lib/amd_models.sh`).
+([`../containers/_lib/amd_models.sh`](../containers/_lib/amd_models.sh)).
 
 ### Retargeting
 
@@ -154,8 +177,8 @@ The flags mirror exactly what the suite's entrypoint runs:
 ### Why this is one-off only
 
 `amd-mi300x/350x/355x` have RVS-only arms in
-`containers/_lib/amd_models.sh`: they resolve `RVS_CONF` but set no RCCL
-floors and disable the VRAM gate, so the full `run.sh` flow still fails fast
-for them. Only `amd-mi325x` (level 4) is calibrated end to end. The vendored
-confs are mirrored verbatim from upstream
+[`../containers/_lib/amd_models.sh`](../containers/_lib/amd_models.sh): they
+resolve `RVS_CONF` but set no RCCL floors and disable the VRAM gate, so the full
+`run.sh` flow still fails fast for them. Only `amd-mi325x` (level 4) is
+calibrated end to end. The vendored confs are mirrored verbatim from upstream
 `ROCmValidationSuite/rvs/conf/<MODEL>/levels/`.

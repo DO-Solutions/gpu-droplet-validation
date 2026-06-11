@@ -5,7 +5,7 @@
 # `kubectl apply`d (the "run.sh of Kubernetes" — no Helm, no release state).
 #
 # Shipped inside the release tarball alongside run.sh, the compose files,
-# examples/, and a VERSION file.
+# k8s/, and a VERSION file.
 #
 # Contract (per node, aggregated across nodes):
 #   stdout  -> TAP v14 from each node's tap-reporter

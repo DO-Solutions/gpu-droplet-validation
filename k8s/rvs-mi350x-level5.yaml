@@ -6,12 +6,12 @@
 # the RVS [RESULT] stream + end-of-run summary table in the logs are the
 # signal.
 #
-# Apply:   kubectl apply -f examples/rvs-mi350x-level5.yaml
+# Apply:   kubectl apply -f k8s/rvs-mi350x-level5.yaml
 # Wait:    kubectl wait --for=condition=Ready pod/rvs-mi350x-level5 --timeout=5m
 # Watch:   kubectl logs -f pod/rvs-mi350x-level5          # primary signal
 # Grab:    kubectl cp rvs-mi350x-level5:/results/rvs.json ./rvs.json   # optional
 #          kubectl cp rvs-mi350x-level5:/results/rvs.log  ./rvs.log    # optional
-# Clean:   kubectl delete -f examples/rvs-mi350x-level5.yaml
+# Clean:   kubectl delete -f k8s/rvs-mi350x-level5.yaml
 #
 # Retarget: this same manifest runs any vendored SKU/level — change
 #   GPU_MODEL  -> amd-mi300x | amd-mi325x | amd-mi350x | amd-mi355x

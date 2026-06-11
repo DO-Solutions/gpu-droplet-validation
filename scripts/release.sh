@@ -125,11 +125,11 @@ chmod +x "$staging/run.sh"
 
 # k8s path ships alongside compose in the SAME tarball: the run-k8s.sh wrapper
 # (generates + applies the Job manifests; no Helm) reads the same VERSION file
-# to pin the image version. examples/ ships too so the checked-in standalone
+# to pin the image version. k8s/ ships too so the checked-in standalone
 # manifests travel with the release. Compose staging above is unchanged.
 cp "$REPO_ROOT/run-k8s.sh" "$staging/run-k8s.sh"
 chmod +x "$staging/run-k8s.sh"
-cp -r "$REPO_ROOT/examples" "$staging/examples"
+cp -r "$REPO_ROOT/k8s" "$staging/k8s"
 
 versioned_tarball="$DIST_DIR/gpu-droplet-validation-$VERSION.tgz"
 latest_tarball="$DIST_DIR/gpu-droplet-validation-latest.tgz"

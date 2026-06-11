@@ -14,7 +14,7 @@ RAW=/results/rvs.log
 OUT=/results/rvs.json
 
 # In the compose flow /results is a bind mount, but a standalone one-off run
-# (examples/, scratch/) has no volume — ensure the dir exists so the tee to
+# (k8s/, scratch/) has no volume — ensure the dir exists so the tee to
 # $RAW and the $OUT write land somewhere instead of dying with
 # "No such file or directory".
 mkdir -p "$(dirname "$RAW")"

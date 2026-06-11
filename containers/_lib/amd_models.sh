@@ -54,7 +54,7 @@ case "$GPU_MODEL" in
     RCCL_ALLTOALL_FLOOR=330
     ;;
   # RVS-one-off-only SKUs. These arms exist solely so the rvs entrypoint can
-  # resolve RVS_CONF for a standalone, manual run (e.g. an examples/ pod at
+  # resolve RVS_CONF for a standalone, manual run (e.g. a k8s/ pod at
   # level 5 on an MI300X node) — they are NOT calibrated for the full
   # run.sh/compose validation flow. EXPECTED_VRAM_MIB=0 disables the prereqs
   # VRAM gate, and no RCCL_*_FLOOR is set on purpose: a full flow on these

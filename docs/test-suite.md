@@ -21,7 +21,7 @@ real TAP with `not ok` points and exit `1`.
 ## `--gpu-model nvidia-b300`
 
 Thresholds and expected values come from
-[`containers/_lib/nvidia_models.sh`](containers/_lib/nvidia_models.sh).
+[`containers/_lib/nvidia_models.sh`](../containers/_lib/nvidia_models.sh).
 A clean run emits 20 TAP points across five suites in the order below.
 
 ### prereqs (6 points) — `containers/prereqs-nvidia/entrypoint.sh`
@@ -50,7 +50,7 @@ in isolation it took ~47 min on 8x B300 and dominated the entire phase;
 its GPU↔GPU bandwidth/latency signal is covered better by the NCCL
 allreduce busbw floor + transport assertion below, which exercise the
 fabric with the real collective workload. See
-[`nvidia_models.sh`](containers/_lib/nvidia_models.sh) for the full
+[`nvidia_models.sh`](../containers/_lib/nvidia_models.sh) for the full
 rationale and measured numbers.
 
 | Test | Threshold / criterion | What `not ok` means |
@@ -107,7 +107,7 @@ regressions induced by the stress phases.
 ## `--gpu-model amd-mi325x`
 
 Thresholds and expected values come from
-[`containers/_lib/amd_models.sh`](containers/_lib/amd_models.sh). A clean
+[`containers/_lib/amd_models.sh`](../containers/_lib/amd_models.sh). A clean
 run on the **current host** emits TAP across five suites in the order
 below, and every point is `ok` **except** `rvs | power-stress (IET)`,
 which is `not ok` on the only available MI325X host
@@ -119,7 +119,7 @@ code is therefore `1`.
 
 > **Adding a future AMD SKU** is a purely additive, two-file change: add
 > one `case` arm to
-> [`containers/_lib/amd_models.sh`](containers/_lib/amd_models.sh) (its
+> [`containers/_lib/amd_models.sh`](../containers/_lib/amd_models.sh) (its
 > model regex + VRAM) and drop in one vendored conf at
 > `containers/rvs/conf/<gpu-model>/rvs_level_4.conf` (sourced from the RVS
 > repo's `conf/<SKU>/levels`). The conf directory name **is** the
