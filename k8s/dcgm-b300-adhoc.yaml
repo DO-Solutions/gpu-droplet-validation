@@ -1,0 +1,68 @@
+# One-off: run the dcgm-diag container's DCGM diagnostic on a single NVIDIA
+# node. Standalone Pod — no Helm, no compose, no validation chain. The NVIDIA
+# analogue of rvs-mi350x-level5.yaml: it runs just the DCGM stage in isolation,
+# not the full prereqs -> setup -> dcgm-diag -> NCCL -> teardown flow.
+#
+# Apply:   kubectl apply -f k8s/dcgm-b300-adhoc.yaml
+# Wait:    kubectl wait --for=condition=Ready pod/dcgm-b300-adhoc --timeout=5m
+# Watch:   kubectl logs -f pod/dcgm-b300-adhoc            # primary signal (dcgmi diag on stdout)
+# Grab:    kubectl cp dcgm-b300-adhoc:/results/dcgm-diag.json     ./dcgm-diag.json     # optional (parsed)
+#          kubectl cp dcgm-b300-adhoc:/results/dcgm-diag_raw.json ./dcgm-diag_raw.json # optional (verbatim dcgmi -j)
+# Clean:   kubectl delete -f k8s/dcgm-b300-adhoc.yaml
+#
+# NOTES
+#  - GPU_MODEL=nvidia-b300 is REQUIRED: the entrypoint sources
+#    /lib/nvidia_models.sh, which exits non-zero on an unset/unknown SKU. It
+#    also fixes the plugin set + per-plugin durations — there is no level knob
+#    like RVS_LEVEL. The run is: dcgmi diag -r "memory,diagnostic,targeted
+#    stress,targeted power" with diagnostic/targeted_stress/targeted_power
+#    duration caps, plus the always-on `software` deployment check. ~29 min on
+#    8x B300. This is the same diag the full suite runs, just standalone.
+#  - The entrypoint launches its own nv-hostengine and tees results to stdout
+#    AND /results/dcgm-diag{,_raw}.json on the container's ephemeral layer.
+#  - GPU access is via the nvidia.com/gpu device plugin ONLY (installed by
+#    default on DOKS GPU nodes). Unlike the AMD path there is no raw-device
+#    (/dev/kfd) fallback — the NVIDIA runtime injects the devices.
+#  - Set nodeSelector hostname and NODE_ID to your actual node.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dcgm-b300-adhoc
+  labels:
+    app: gpu-droplet-validation-scratch
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: CHANGEME-node            # <-- your GPU node
+  tolerations:
+    - key: nvidia.com/gpu                     # GPU node taint (DOKS sets an empty value, so match by key)
+      operator: Exists
+      effect: NoSchedule
+    - key: node.kubernetes.io/unschedulable  # node may be cordoned
+      operator: Exists
+      effect: NoSchedule
+  containers:
+    - name: dcgm-diag
+      image: ghcr.io/do-solutions/gpu-droplet-validation/dcgm-diag:latest
+      imagePullPolicy: Always
+      # Default entrypoint: launch nv-hostengine, run dcgmi diag, parse to JSON.
+      securityContext:
+        privileged: true
+        capabilities:
+          add: ["SYS_PTRACE"]
+        seccompProfile:
+          type: Unconfined
+      env:
+        - name: RUN_ID
+          value: "dcgm-b300-adhoc-001"
+        - name: GPU_MODEL
+          value: "nvidia-b300"     # required — selects the DCGM plugin set in nvidia_models.sh
+        - name: GPU_COUNT
+          value: "8"
+        - name: NODE_ID
+          value: "CHANGEME-node"
+        - name: REGION
+          value: ""
+      resources:
+        limits:
+          nvidia.com/gpu: 8
