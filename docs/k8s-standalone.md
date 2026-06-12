@@ -168,7 +168,7 @@ Because the manifest runs the binary directly, it **bypasses the
 **no pass/fail floor**. The signal is the per-size busbw table and the
 `Avg bus bandwidth` line in the logs. For a calibrated pass/fail run, use the
 full `run.sh` / compose flow on `amd-mi325x`, where the entrypoint gates
-best-of-3 busbw@8GB against `RCCL_ALLREDUCE_FLOOR=300` GB/s
+mean-of-3 busbw@8GB against `RCCL_ALLREDUCE_FLOOR=300` GB/s
 ([`../containers/_lib/amd_models.sh`](../containers/_lib/amd_models.sh)).
 
 ### Retargeting
@@ -255,7 +255,7 @@ Because the manifest runs the binary directly, it **bypasses the
 `nccl-tests-nvidia` entrypoint**: there is no `nvidia_models.sh`, no `GPU_MODEL`,
 and **no pass/fail floor** — so it runs on any NVIDIA SKU, not just calibrated
 ones. The signal is the per-size busbw table and the `Avg bus bandwidth` line in
-the logs. For a calibrated pass/fail run (best-of-3 busbw@8GB gated against
+the logs. For a calibrated pass/fail run (mean-of-3 busbw@8GB gated against
 `NCCL_ALLREDUCE_FLOOR=810` GB/s plus the NVLink-transport assertion), use the
 full `run.sh` / compose flow on `nvidia-b300`
 ([`../containers/_lib/nvidia_models.sh`](../containers/_lib/nvidia_models.sh)).

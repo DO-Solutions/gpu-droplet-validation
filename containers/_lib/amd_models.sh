@@ -25,12 +25,13 @@ case "$GPU_MODEL" in
     EXPECTED_GPU_MODEL_REGEX="MI325X"
     # Enforced expected per-GPU VRAM (amd-smi static --vram size.value).
     EXPECTED_VRAM_MIB=261824
-    # RCCL busbw@8GB floors (GB/s), best-of-3, in-place column. Calibrated
+    # RCCL busbw@8GB floors (GB/s), mean-of-3, in-place column. Calibrated
     # 2026-05-16 across three idle 8x MI325X VF hosts (147.182.158.107,
     # 146.190.255.172, 143.198.32.60): allreduce min-best 318.26, alltoall
     # min-best 301.67, run-to-run + cross-node spread <1%. Floors sit ~5-6%
-    # below the min best run — clears noise on a healthy idle host while
-    # catching a meaningfully degraded GPU/fabric.
+    # below the min best run; with spread <1% the mean of a healthy host stays
+    # within ~1% of its best, so it clears the floor, while a single degraded
+    # run drags the mean below it (best-of-3 would have masked that run).
     RCCL_ALLREDUCE_FLOOR=300
     RCCL_ALLTOALL_FLOOR=285
     ;;
@@ -39,7 +40,7 @@ case "$GPU_MODEL" in
     EXPECTED_GPU_MODEL_REGEX="MI350X"
     # amd-smi static --vram size.value on the MI350X VF host (288 GB HBM3E).
     EXPECTED_VRAM_MIB=294592
-    # RCCL busbw@8GB floors (GB/s), best-of-3, in-place column. Calibrated
+    # RCCL busbw@8GB floors (GB/s), mean-of-3, in-place column. Calibrated
     # 2026-05-30 on an idle 8x MI350X VF host (206.189.78.90,
     # jkeegan-sfo2-mi350x, ROCm 7.0.2): allreduce min-best 393.39, alltoall
     # min-best 349.10, run-to-run spread <0.2%. Floors sit ~5.5-6% below the

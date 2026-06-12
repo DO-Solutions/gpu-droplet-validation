@@ -69,13 +69,14 @@ echoed in the TAP diagnostic.
 
 ### nccl-allreduce (2 points) — `containers/nccl-tests-nvidia/entrypoint.sh`
 
-Runs NCCL `all_reduce_perf -b 32K -e 8G -f 2 -g 8 -w 5 -n 20`, best of 3
-runs (selected by highest average bus bandwidth). Concurrently captures
-`nvidia-smi dmon` to `results/nccl-allreduce_dmon.log`.
+Runs NCCL `all_reduce_perf -b 32K -e 8G -f 2 -g 8 -w 5 -n 20` three times and
+gates on the **mean** busbw@8GB across the runs (so a single low run is not
+masked by a good one). Concurrently captures `nvidia-smi dmon` to
+`results/nccl-allreduce_dmon.log`.
 
 | Test | Threshold / criterion | What `not ok` means |
 |---|---|---|
-| `NCCL allreduce busbw@8GB >= 810 GB/s` | In-place bus bandwidth at the 8 GiB message size from the best of 3 runs is at least **810 GB/s** | This is the headline B300 collective-bandwidth floor. Below it means the GPU complex is not delivering the bandwidth a customer paying for a B300 expects — most often a fabric, NVLink, or PCIe regression. The diagnostic block includes `busbw_8g_GBps`, `best_avg_busbw_GBps`, and a `per_size_table` of 8 MB / 64 MB / 1 GB / 8 GB rows for triage. |
+| `NCCL allreduce mean busbw@8GB >= 810 GB/s` | The mean of the per-run in-place bus bandwidths at the 8 GiB message size, across the 3 runs, is at least **810 GB/s** | This is the headline B300 collective-bandwidth floor. Below it means the GPU complex is not delivering the bandwidth a customer paying for a B300 expects — most often a fabric, NVLink, or PCIe regression. The diagnostic block includes `mean_busbw_8g_GBps`, `per_run_busbw_8g_GBps`, `mean_avg_busbw_GBps`, and a `per_size_table` of 8 MB / 64 MB / 1 GB / 8 GB rows (from the median run) for triage. |
 | `NCCL transport is NVLink (no PIX/SYS/PHB)` | All four must hold: (a) every rank logged `isAllDirectP2p 1 directMode 1 isAllCudaP2p 1`; (b) the count of those lines is `== GPU_COUNT`; (c) `NVLS multicast support is available on dev N` appeared at least `GPU_COUNT` times; (d) no `Falling back to`, `Cannot use P2P`, `cannot enable peer access`, or `disabling P2P` lines in the NCCL debug log | NCCL silently fell back to a slower transport (PIX/SYS/PHB). The busbw number above could be technically passing while still indicating a topology bug; this point is the independent transport assertion. The diagnostic lists which signals failed and the offending log lines. |
 
 ### nccl-alltoall (1 point) — same container, `NCCL_TEST=alltoall`
@@ -171,16 +172,16 @@ keeping the best by average bus bandwidth. Concurrently captures an
 
 | Test | Threshold / criterion | What `not ok` means |
 |---|---|---|
-| `RCCL all_reduce_perf busbw@8GB >= 300 GB/s` | In-place bus bandwidth at the 8 GiB message size from the best of 3 runs is at least **300 GB/s** (or no run produced a parseable Avg bus bandwidth) | The GPU complex is not delivering the collective bandwidth an MI325X should — most often an xGMI fabric or PCIe regression, or (if no run completed) a hang/abort. Floor calibrated 2026-05-16 across three idle 8× MI325X hosts (min best run 318.26 GB/s, spread <1%). The diagnostic includes `busbw_8g_GBps`, `best_avg_busbw_GBps`, and a full `per_size_table`. |
+| `RCCL all_reduce_perf mean busbw@8GB >= 300 GB/s` | The mean of the per-run in-place bus bandwidths at the 8 GiB message size, across the 3 runs, is at least **300 GB/s** (or no run produced a busbw@8GB row) | The GPU complex is not delivering the collective bandwidth an MI325X should — most often an xGMI fabric or PCIe regression, or (if no run completed) a hang/abort. Floor calibrated 2026-05-16 across three idle 8× MI325X hosts (min best run 318.26 GB/s, spread <1%); the ~6% headroom keeps a healthy host's mean above the floor. The diagnostic includes `mean_busbw_8g_GBps`, `per_run_busbw_8g_GBps`, `mean_avg_busbw_GBps`, and a full `per_size_table`. |
 
 ### rccl-alltoall (1 point) — same container, `RCCL_TEST=alltoall`
 
-Runs `alltoall_perf -b 32K -e 8G -f 2 -g 8 -w 5 -n 20` three times, keeping
-the best by average bus bandwidth.
+Runs `alltoall_perf -b 32K -e 8G -f 2 -g 8 -w 5 -n 20` three times and gates on
+the mean busbw@8GB across the runs.
 
 | Test | Threshold / criterion | What `not ok` means |
 |---|---|---|
-| `RCCL alltoall_perf busbw@8GB >= 285 GB/s` | In-place bus bandwidth at the 8 GiB message size from the best of 3 runs is at least **285 GB/s** (or no run produced a parseable Avg bus bandwidth) | The all-to-all collective is not delivering expected bandwidth, or could not complete. Floor calibrated 2026-05-16 across three idle 8× MI325X hosts (min best run 301.67 GB/s, spread <1%). Same diagnostic shape as allreduce. |
+| `RCCL alltoall_perf mean busbw@8GB >= 285 GB/s` | The mean of the per-run in-place bus bandwidths at the 8 GiB message size, across the 3 runs, is at least **285 GB/s** (or no run produced a busbw@8GB row) | The all-to-all collective is not delivering expected bandwidth, or could not complete. Floor calibrated 2026-05-16 across three idle 8× MI325X hosts (min best run 301.67 GB/s, spread <1%). Same diagnostic shape as allreduce. |
 
 ### post-health (3 points) — `containers/teardown-amd/entrypoint.sh`
 

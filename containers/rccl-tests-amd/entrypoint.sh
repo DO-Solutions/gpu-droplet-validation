@@ -5,12 +5,13 @@
 #   - allreduce: all_reduce_perf
 #   - alltoall : alltoall_perf
 #
-# Gate: best-of-3 busbw@8GB (in-place column) against a per-collective
+# Gate: mean-of-3 busbw@8GB (in-place column) against a per-collective
 # SKU floor from amd_models.sh ($RCCL_ALLREDUCE_FLOOR / $RCCL_ALLTOALL_FLOOR).
-# Floors were calibrated across three idle 8x MI325X hosts (spread <1%);
-# best-of-3 absorbs run-to-run noise. If no run yields a parseable Avg bus
-# bandwidth the collective could not complete and the point fails. No
-# NVLink-transport assertion (that is NVIDIA-specific).
+# Floors were calibrated across three idle 8x MI325X hosts (spread <1%) and sit
+# ~5-6% below the min healthy run, so averaging (rather than best-of-3) still
+# clears on a healthy host but a single low run drags the mean below the floor
+# instead of being masked. If no run yields a busbw@8GB row the collective could
+# not complete and the point fails. No NVLink-transport assertion (NVIDIA-only).
 #
 # Both runs capture a concurrent rocm-smi sample stream to
 # /results/<suite>_dmon.log (the AMD analogue of `nvidia-smi dmon`).
@@ -82,71 +83,81 @@ parse_per_size() {
 parse_avg_busbw() {
   awk -F: '/Avg bus bandwidth/ { gsub(/ /,"",$2); print $2; exit }' "$1"
 }
+# busbw@8GB from the in-place busbw column ($12) of a single run log — the value
+# the SKU floor gates on.
+parse_busbw_8g() {
+  awk '/^#/ { next } NF >= 13 && $1 == "8589934592" { print $12; exit }' "$1"
+}
 
-# Best-of-3 by average bus bandwidth. A run that exits non-zero or produces
-# no Avg line simply is not selected; if none of the three yields one the
-# collective could not complete and the point fails below.
-best_avg=""
-best_run=""
+# Mean-of-3 on busbw@8GB. A run that exits non-zero or produces no 8 GB row
+# simply contributes no sample; if none of the three do, the collective could
+# not complete and the point fails below. Averaging the gated metric (rather
+# than gating on the best of 3) keeps a single low run from being masked.
+run_busbws=()   # busbw@8GB per run that produced an 8 GB row — the gated samples
+run_files=()    # parallel to run_busbws: the log each sample came from
+avg_busbws=()   # across-size Avg bus bandwidth per run (diagnostic only)
 for i in 1 2 3; do
   run_file="/tmp/rccl-${SUITE}-run${i}.log"
   log "perf run $i/3 ($RCCL_TEST)"
   if ! run_rccl_perf > "$run_file" 2>&1; then
     log "perf run $i exited non-zero"
   fi
+  b8="$(parse_busbw_8g "$run_file")"
   avg="$(parse_avg_busbw "$run_file")"
-  log "  avg busbw: ${avg:-<none>}"
-  if [ -n "$avg" ]; then
-    if [ -z "$best_avg" ] || awk -v a="$avg" -v b="$best_avg" 'BEGIN{exit !(a>b)}'; then
-      best_avg="$avg"
-      best_run="$run_file"
-    fi
+  log "  busbw@8GB: ${b8:-<none>}  avg busbw: ${avg:-<none>}"
+  if [ -n "$b8" ]; then
+    run_busbws+=("$b8")
+    run_files+=("$run_file")
   fi
+  [ -n "$avg" ] && avg_busbws+=("$avg")
 done
 
-if [ -n "$best_run" ]; then
-  cp "$best_run" "/results/${SUITE}_best.log" || true
-  cp "$best_run" "/results/${SUITE}_run.log" || true
-  busbw_8g="$(awk '
-    /^#/ { next }
-    NF >= 13 && $1 == "8589934592" { print $12; exit }
-  ' "$best_run")"
-  [ -n "$busbw_8g" ] || busbw_8g="0"
-  per_size_all="$(parse_per_size "$best_run" | jq -s '.')"
+if [ "${#run_busbws[@]}" -gt 0 ]; then
+  busbw_8g="$(printf '%s\n' "${run_busbws[@]}" | awk '{ s += $1; n++ } END { printf "%.2f", (n ? s / n : 0) }')"
+  per_run_busbw="$(printf '%s\n' "${run_busbws[@]}" | jq -s '.')"
+  # Representative run for the per-size table: the one whose busbw@8GB is the
+  # median (for 3 runs, the middle value), so the table reflects a typical run.
+  rep_run="$(paste -d' ' <(printf '%s\n' "${run_busbws[@]}") <(printf '%s\n' "${run_files[@]}") \
+    | sort -n -k1,1 | awk -v n="${#run_busbws[@]}" 'NR == int((n + 1) / 2) { print $2 }')"
+  cp "$rep_run" "/results/${SUITE}_best.log" || true
+  cp "$rep_run" "/results/${SUITE}_run.log" || true
+  per_size_all="$(parse_per_size "$rep_run" | jq -s '.')"
 else
   busbw_8g="0"
+  per_run_busbw="[]"
   per_size_all="[]"
 fi
-best_avg_num="${best_avg:-0}"
+mean_avg_num="$(printf '%s\n' "${avg_busbws[@]}" | awk '{ s += $1; n++ } END { printf "%.2f", (n ? s / n : 0) }')"
 
-# Pass/fail: a usable best run AND busbw@8GB at or above the floor.
+# Pass/fail: at least one usable run AND mean busbw@8GB at or above the floor.
 pass=true
-if [ -z "$best_run" ]; then
+if [ "${#run_busbws[@]}" -eq 0 ]; then
   pass=false
-  msg="RCCL $BIN_CANDIDATES produced no parseable Avg bus bandwidth in 3 runs — the collective could not complete"
+  msg="RCCL $BIN_CANDIDATES produced no parseable busbw@8GB in 3 runs — the collective could not complete"
 elif awk -v a="$busbw_8g" -v b="$FLOOR" 'BEGIN{exit !(a < b)}'; then
   pass=false
-  msg="RCCL $BIN_CANDIDATES busbw@8GB is ${busbw_8g} GB/s, below the ${FLOOR} GB/s floor (best of 3 runs)"
+  msg="RCCL $BIN_CANDIDATES mean busbw@8GB is ${busbw_8g} GB/s (per run: ${per_run_busbw}), below the ${FLOOR} GB/s floor (mean of 3 runs)"
 fi
 
 # On failure prepend a human-readable `message` field (convention: every
 # not-ok diagnostic starts with `message`). Performance fields are kept on
 # pass too — useful for tracking drift over time.
 diag="$(jq -n \
-  --argjson busbw_8g_GBps "$busbw_8g" \
+  --argjson mean_busbw_8g_GBps "$busbw_8g" \
   --argjson floor "$FLOOR" \
-  --argjson best_avg "$best_avg_num" \
+  --argjson per_run "$per_run_busbw" \
+  --argjson mean_avg "$mean_avg_num" \
   --argjson per_size "$per_size_all" \
   --argjson pass "$pass" \
   --arg msg "${msg:-}" '
-  { busbw_8g_GBps: $busbw_8g_GBps, floor_GBps: $floor, best_avg_busbw_GBps: $best_avg, per_size_table: $per_size }
+  { mean_busbw_8g_GBps: $mean_busbw_8g_GBps, floor_GBps: $floor, per_run_busbw_8g_GBps: $per_run, mean_avg_busbw_GBps: $mean_avg, per_size_table: $per_size }
   | if $pass then . else { message: $msg } + . end')"
 
 tests="$(jq -n --argjson pass "$pass" --argjson diag "$diag" \
-  --arg name "RCCL ${BIN_CANDIDATES} busbw@8GB >= ${FLOOR} GB/s" '[
+  --arg name "RCCL ${BIN_CANDIDATES} mean busbw@8GB >= ${FLOOR} GB/s" '[
   { ok: $pass, name: $name, directive: null, diagnostic: $diag }
 ]')"
 
 jq -n --arg suite "$SUITE" --argjson tests "$tests" \
   '{ suite: $suite, tests: $tests }' > "$OUT_JSON"
-log "ok (busbw@8GB=${busbw_8g} floor=${FLOOR} best_avg=${best_avg:-<none>} pass=${pass})"
+log "ok (mean busbw@8GB=${busbw_8g} floor=${FLOOR} per_run=${per_run_busbw} pass=${pass})"

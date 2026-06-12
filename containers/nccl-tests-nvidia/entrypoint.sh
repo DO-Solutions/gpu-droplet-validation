@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # NCCL perf container. One image, two services selected via $NCCL_TEST:
-#   - allreduce: topology/debug capture + best-of-3 perf, SKU-floor on busbw@8GB,
+#   - allreduce: topology/debug capture + mean-of-3 perf, SKU-floor on busbw@8GB,
 #     per-size table, NVLink transport assertion.
 #   - alltoall : single perf run; exit 0 alone is the pass signal (per plan).
 #
@@ -71,6 +71,12 @@ parse_avg_busbw() {
   awk -F: '/Avg bus bandwidth/ { gsub(/ /,"",$2); print $2; exit }' "$1"
 }
 
+# busbw@8GB from the in-place busbw column ($12) of a single run log. This is
+# the value the SKU floor gates on.
+parse_busbw_8g() {
+  awk '/^#/ { next } NF >= 13 && $1 == "8589934592" { print $12; exit }' "$1"
+}
+
 emit_tests_json() {
   local jsonpath="$1"; shift
   jq -n --arg suite "$SUITE" --argjson tests "$1" '{ suite: $suite, tests: $tests }' > "$jsonpath"
@@ -83,37 +89,45 @@ if [ "$NCCL_TEST" = "allreduce" ]; then
   NCCL_DEBUG=INFO "$BIN" -b 1G -e 1G -n 1 -g "$GPU_COUNT" \
     > "$DEBUG_LOG" 2>&1 || true
 
-  # 2. Perf: best-of-3 by average bus bandwidth.
-  best_avg=""
-  best_run=""
+  # 2. Perf: mean-of-3 on busbw@8GB. Averaging the gated metric (rather than
+  #    gating on the best of 3 runs) means a single low run drags the value down
+  #    instead of being masked by the two good runs — an intermittently-degraded
+  #    host is caught, not hidden. We average busbw@8GB directly rather than
+  #    picking a run by its across-size average and then reading that run's 8 GB
+  #    row, so the metric we select on and the metric we gate on are the same.
+  run_busbws=()   # busbw@8GB per run that produced an 8 GB row — the gated samples
+  run_files=()    # parallel to run_busbws: the log each sample came from
+  avg_busbws=()   # across-size Avg bus bandwidth per run (diagnostic only)
   for i in 1 2 3; do
     run_file="/tmp/nccl-${SUITE}-run${i}.log"
     log "perf run $i/3"
     if ! run_nccl_perf > "$run_file" 2>&1; then
       log "perf run $i exited non-zero"
     fi
+    b8="$(parse_busbw_8g "$run_file")"
     avg="$(parse_avg_busbw "$run_file")"
-    log "  avg busbw: ${avg:-<none>}"
-    if [ -n "$avg" ]; then
-      if [ -z "$best_avg" ] || awk -v a="$avg" -v b="$best_avg" 'BEGIN{exit !(a>b)}'; then
-        best_avg="$avg"
-        best_run="$run_file"
-      fi
+    log "  busbw@8GB: ${b8:-<none>}  avg busbw: ${avg:-<none>}"
+    if [ -n "$b8" ]; then
+      run_busbws+=("$b8")
+      run_files+=("$run_file")
     fi
+    [ -n "$avg" ] && avg_busbws+=("$avg")
   done
-  [ -n "$best_run" ] || die "no NCCL perf run produced an Avg bus bandwidth line"
+  [ "${#run_busbws[@]}" -gt 0 ] || die "no NCCL perf run produced a busbw@8GB row"
 
-  cp "$best_run" "/results/${SUITE}_best.log"
+  # 3. Mean busbw@8GB across the runs that produced an 8 GB row — the gated value.
+  busbw_8g="$(printf '%s\n' "${run_busbws[@]}" | awk '{ s += $1; n++ } END { printf "%.2f", (n ? s / n : 0) }')"
+  mean_avg_busbw="$(printf '%s\n' "${avg_busbws[@]}" | awk '{ s += $1; n++ } END { printf "%.2f", (n ? s / n : 0) }')"
+  per_run_busbw="$(printf '%s\n' "${run_busbws[@]}" | jq -s '.')"
 
-  # 3. Extract busbw@8GB from the best run's in-place busbw column ($12).
-  busbw_8g="$(awk '
-    /^#/ { next }
-    NF >= 13 && $1 == "8589934592" { print $12; exit }
-  ' "$best_run")"
-  [ -n "$busbw_8g" ] || busbw_8g="0"
+  # 4. Representative run for the per-size table: the one whose busbw@8GB is the
+  #    median (for 3 runs, the middle value), so the table reflects a typical run.
+  rep_run="$(paste -d' ' <(printf '%s\n' "${run_busbws[@]}") <(printf '%s\n' "${run_files[@]}") \
+    | sort -n -k1,1 | awk -v n="${#run_busbws[@]}" 'NR == int((n + 1) / 2) { print $2 }')"
+  cp "$rep_run" "/results/${SUITE}_best.log"
 
-  # 4. Per-size table (8 MB / 64 MB / 1 GB / 8 GB).
-  per_size_all="$(parse_per_size "$best_run" | jq -s '.')"
+  # 5. Per-size table (8 MB / 64 MB / 1 GB / 8 GB) from the representative run.
+  per_size_all="$(parse_per_size "$rep_run" | jq -s '.')"
   per_size_table="$(echo "$per_size_all" | jq '[ .[] | select(.size==8388608 or .size==67108864 or .size==1073741824 or .size==8589934592) ]')"
 
   # 5. NVLink transport check from the debug log.
@@ -142,13 +156,14 @@ if [ "$NCCL_TEST" = "allreduce" ]; then
   # diagnostic starts with a `message` field). The performance fields are
   # preserved on pass too, since they're useful even when the floor was met.
   diag_floor="$(jq -n \
-    --argjson busbw_8g_GBps "$busbw_8g" \
+    --argjson mean_busbw_8g_GBps "$busbw_8g" \
     --argjson floor "$NCCL_ALLREDUCE_FLOOR" \
-    --argjson best_avg "${best_avg:-0}" \
+    --argjson per_run "$per_run_busbw" \
+    --argjson mean_avg "$mean_avg_busbw" \
     --argjson per_size "$per_size_table" \
     --argjson pass_floor "$pass_floor" \
-    '{ busbw_8g_GBps: $busbw_8g_GBps, floor_GBps: $floor, best_avg_busbw_GBps: $best_avg, per_size_table: $per_size }
-     | if $pass_floor then . else { message: "NCCL allreduce busbw@8GB is \($busbw_8g_GBps) GB/s, below the \($floor) GB/s floor" } + . end')"
+    '{ mean_busbw_8g_GBps: $mean_busbw_8g_GBps, floor_GBps: $floor, per_run_busbw_8g_GBps: $per_run, mean_avg_busbw_GBps: $mean_avg, per_size_table: $per_size }
+     | if $pass_floor then . else { message: "NCCL allreduce mean busbw@8GB is \($mean_busbw_8g_GBps) GB/s (per run: \($per_run)), below the \($floor) GB/s floor" } + . end')"
 
   # NVLink transport pass/fail point.
   # Pass requires: every rank reports full direct P2P, the NVLS multicast
@@ -183,14 +198,14 @@ if [ "$NCCL_TEST" = "allreduce" ]; then
     --argjson nvl_ok "$nvl_ok" \
     --argjson diag_floor "$diag_floor" \
     --argjson diag_nvl_extra "$diag_nvl_extra" \
-    --arg floor_name "NCCL allreduce busbw@8GB >= $NCCL_ALLREDUCE_FLOOR GB/s" '
+    --arg floor_name "NCCL allreduce mean busbw@8GB >= $NCCL_ALLREDUCE_FLOOR GB/s" '
     [
       { ok: $pass_floor, name: $floor_name,  diagnostic: $diag_floor },
       { ok: $nvl_ok,     name: "NCCL transport is NVLink (no PIX/SYS/PHB)", diagnostic: ($diag_nvl_extra | if (. | length)==0 then null else . end) }
     ]')"
 
   emit_tests_json "$OUT_JSON" "$tests"
-  log "ok (busbw@8GB=$busbw_8g floor=$NCCL_ALLREDUCE_FLOOR)"
+  log "ok (mean busbw@8GB=$busbw_8g floor=$NCCL_ALLREDUCE_FLOOR per_run=$per_run_busbw)"
 
 else
   # alltoall: single perf run, pass = exit 0 (no SKU floor per plan).
