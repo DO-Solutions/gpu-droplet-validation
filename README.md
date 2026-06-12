@@ -6,6 +6,16 @@ gets TAP v14 on stdout plus artifacts in `./results` (override with
 `--results-dir <path>`). The same images and `/results` TAP v14 contract also
 run on Kubernetes via `run-k8s.sh` or via custom manifest.
 
+## What this is for
+
+This suite is a **quick baseline health check** for GPU Droplets and provides a
+repeatable way to confirm, in **under an hour**, that the GPUs, their
+interconnect, and the surrounding software stack are present, configured
+correctly, and performing at the level expected for the SKU. It gives reasonable
+confidence that the underlying GPU hardware is working before a Droplet is put to
+use, and provides an easy point validation that can be run against a live Droplet
+whenever there is any doubt about the hardware.
+
 ## Supported families
 
 | `--gpu-model`  | What it runs                                                       |
