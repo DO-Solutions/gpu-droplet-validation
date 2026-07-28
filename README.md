@@ -124,7 +124,17 @@ diagnostic manifests (AMD RVS/RCCL, NVIDIA DCGM/NCCL) — is in
   written **only** when the suite could not run at all (missing prereqs,
   Docker / compose / image-pull failure, bad flags). Any stderr output is
   the signal that the environment is broken; the pass/fail determination
-  from stdout is irrelevant in that case.
+  from stdout is irrelevant in that case. That line names the cause so the
+  reader does not have to open `run.log` — a failed prereqs check renders as
+  `prereqs failed: <check> — <what was expected vs. seen>`, with every failing
+  check listed, `; `-separated:
+
+  ```
+  prereqs failed: GPU count == 8 — expected 8 GPUs, saw 7
+  ```
+
+  When the environment broke down before prereqs could record anything (image
+  pull failure, Docker daemon down), the line describes that instead.
 - **Exit codes**:
   - `0` — suite ran and every TAP test point was `ok`.
   - `1` — suite ran and at least one TAP test point was `not ok`.

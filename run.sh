@@ -86,7 +86,10 @@ mkdir -p "$RESULTS_DIR"
 chmod 0755 "$RESULTS_DIR"
 LOG_FILE="$RESULTS_DIR/run.log"
 : > "$LOG_FILE"
-rm -f "$RESULTS_DIR/output.tap" "$RESULTS_DIR/tap_exit"
+# prereqs.json is cleared too: the "no TAP produced" branch at the bottom
+# reads it to explain the failure, and a leftover file from an earlier run
+# would describe the wrong run.
+rm -f "$RESULTS_DIR/output.tap" "$RESULTS_DIR/tap_exit" "$RESULTS_DIR/prereqs.json"
 
 # ---------- 2. Idempotent prerequisites ----------
 need_root() {
@@ -293,6 +296,83 @@ if [ -s "$RESULTS_DIR/output.tap" ] && [ -f "$RESULTS_DIR/tap_exit" ]; then
   esac
 fi
 
-# No TAP output means the suite could not run (prereqs / compose / pull failure).
+# ---------- 7. No TAP: explain why on stderr ----------
+# The suite could not run (prereqs / compose / pull failure). Per the contract
+# this is the one place we write to the caller's stderr, and it stays a single
+# line — but that line has to name the actual cause. The reader is an operator
+# looking at a terminal, not someone who can go fetch run.log out of a Spaces
+# bucket.
+#
+# Sources are tried strongest-first and each one degrades to the next, because
+# the whole point of this branch is that the environment may be too broken to
+# have produced the better source:
+#   1. prereqs.json      — the checks ran and recorded exactly what failed.
+#   2. [prereqs] in log  — the container died before writing its JSON
+#                          (missing env var, mock error-* scenario, ...).
+#   3. known log pattern — compose never got as far as prereqs at all.
+#   4. the original generic line.
+
+# Same rendering as format_failures() in containers/_lib/result.sh, duplicated
+# because run.sh runs on the host and can't source the container lib.
+prereqs_failures() {
+  local path="$RESULTS_DIR/prereqs.json"
+  [ -r "$path" ] || return 0
+  jq -r '
+    [ (.tests // [])[]
+      | select(.ok == false)
+      | ((.name // "unnamed check") | tostring) as $n
+      | (if (.diagnostic | type) == "object"
+         then ((.diagnostic.message // "") | tostring)
+         else "" end) as $m
+      | if $m == "" then $n else "\($n) — \($m)" end
+    ]
+    | join("; ")
+    | gsub("[\r\n]+"; " ")
+  ' "$path" 2>/dev/null || true
+}
+
+# Last line the prereqs container wrote to its stderr. Compose prefixes each
+# line with the container name, so strip everything up to the "[prereqs] " tag.
+prereqs_log_line() {
+  [ -r "$LOG_FILE" ] || return 0
+  grep -a '\[prereqs\]' "$LOG_FILE" 2>/dev/null \
+    | grep -av '\[prereqs\] ok$' \
+    | tail -n 1 \
+    | sed 's/.*\[prereqs\] //' \
+    | tr -d '\r' || true
+}
+
+# Coarse classification of failures that happen before any container runs.
+compose_failure_reason() {
+  [ -r "$LOG_FILE" ] || return 0
+  if grep -qa 'Cannot connect to the Docker daemon' "$LOG_FILE"; then
+    echo "cannot connect to the Docker daemon"
+  elif grep -qaE 'manifest unknown|not found: manifest|pull access denied|denied: denied|failed to resolve reference|error pulling image' "$LOG_FILE"; then
+    echo "could not pull one or more container images from the registry"
+  elif grep -qaE 'could not select device driver|nvidia-container-cli|unknown or invalid runtime name' "$LOG_FILE"; then
+    echo "Docker could not attach the GPU devices (container runtime not wired)"
+  elif grep -qaE 'no space left on device' "$LOG_FILE"; then
+    echo "no space left on device"
+  fi
+}
+
+failures="$(prereqs_failures)"
+if [ -n "$failures" ]; then
+  echo "prereqs failed: $failures" >&2
+  exit 255
+fi
+
+prereqs_line="$(prereqs_log_line)"
+if [ -n "$prereqs_line" ]; then
+  echo "prereqs failed: $prereqs_line" >&2
+  exit 255
+fi
+
+reason="$(compose_failure_reason)"
+if [ -n "$reason" ]; then
+  echo "validation suite could not run: $reason (docker compose exit=$compose_rc). See $LOG_FILE for detail." >&2
+  exit 255
+fi
+
 echo "validation suite failed to produce TAP output (docker compose exit=$compose_rc). See $LOG_FILE for detail." >&2
 exit 255
