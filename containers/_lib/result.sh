@@ -14,6 +14,7 @@ die() { printf '[%s] %s\n' "${SUITE:-container}" "$*" >&2; exit 1; }
 # nothing (rc 0) when the file is missing, unreadable, malformed, or has no
 # failures, so callers can test for a non-empty string. Kept to one line on
 # purpose: the stderr contract in README.md is a single error line.
+
 format_failures() {
   local path="$1"
   [ -r "$path" ] || return 0
