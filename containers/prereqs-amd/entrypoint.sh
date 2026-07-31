@@ -141,6 +141,8 @@ fi
 jq --arg suite "$SUITE" '{ suite: $suite, tests: . }' "$results_tmp" > /results/prereqs.json
 
 if [ "$fail" -ne 0 ]; then
-  die "prereqs failed; halting suite"
+  die_with_failures /results/prereqs.json \
+    "prereqs failed" \
+    "prereqs failed; halting suite"
 fi
 log "ok"
