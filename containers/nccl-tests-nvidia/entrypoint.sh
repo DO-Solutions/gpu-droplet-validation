@@ -97,11 +97,23 @@ if [ "$NCCL_TEST" = "allreduce" ]; then
     log "  busbw@8GB: ${b8:-<none>}  avg busbw: ${avg:-<none>}"
     [ -n "$b8" ] && run_busbws+=("$b8")
   done
-  [ "${#run_busbws[@]}" -gt 0 ] || die "no NCCL perf run produced a busbw@8GB row"
-
   # 3. Mean busbw@8GB across the runs that produced an 8 GB row — the gated value.
-  busbw_8g="$(printf '%s\n' "${run_busbws[@]}" | awk '{ s += $1; n++ } END { printf "%.2f", (n ? s / n : 0) }')"
-  per_run_busbw="$(printf '%s\n' "${run_busbws[@]}" | jq -s '.')"
+  # No usable run at all is a test failure, not an environment failure: it is
+  # what a host with an uninitialized NVSwitch fabric looks like (every run
+  # dies with 'system not yet initialized'). Record it as a not-ok point and
+  # exit 0 so alltoall, teardown and tap-reporter still run and the caller
+  # gets TAP naming the failure — this used to `die`, which halted the stack
+  # on service_completed_successfully and left run.sh with nothing to report
+  # but "failed to produce TAP output". Mirrors rccl-tests-amd.
+  if [ "${#run_busbws[@]}" -gt 0 ]; then
+    busbw_8g="$(printf '%s\n' "${run_busbws[@]}" | awk '{ s += $1; n++ } END { printf "%.2f", (n ? s / n : 0) }')"
+    # -c: the array is interpolated into the failure message below, and a
+    # pretty-printed one would drop newlines into a single-line TAP diagnostic.
+    per_run_busbw="$(printf '%s\n' "${run_busbws[@]}" | jq -sc '.')"
+  else
+    busbw_8g="0"
+    per_run_busbw="[]"
+  fi
 
   # 4. NVLink transport check from the debug log.
   # NCCL 2.29 dropped the legacy "via NVL/PIX/SYS/PHB" annotations. Instead the
@@ -119,10 +131,16 @@ if [ "$NCCL_TEST" = "allreduce" ]; then
   nvls_count="$(grep -c "NVLS multicast support is available on dev" "$DEBUG_LOG" 2>/dev/null || true)"
   fallback_lines="$(grep -E "Falling back to|Cannot use P2P|cannot enable peer access|disabling P2P" "$DEBUG_LOG" 2>/dev/null || true)"
 
-  # Floor pass/fail point.
+  # Floor pass/fail point. Pass needs at least one usable run AND a mean at or
+  # above the floor.
   pass_floor=true
-  if awk -v a="$busbw_8g" -v b="$NCCL_ALLREDUCE_FLOOR" 'BEGIN{exit !(a < b)}'; then
+  floor_msg=""
+  if [ "${#run_busbws[@]}" -eq 0 ]; then
     pass_floor=false
+    floor_msg="NCCL allreduce produced no parseable busbw@8GB in 3 runs — the collective could not complete"
+  elif awk -v a="$busbw_8g" -v b="$NCCL_ALLREDUCE_FLOOR" 'BEGIN{exit !(a < b)}'; then
+    pass_floor=false
+    floor_msg="NCCL allreduce mean busbw@8GB is $busbw_8g GB/s (per run: $per_run_busbw), below the $NCCL_ALLREDUCE_FLOOR GB/s floor"
   fi
 
   # On failure prepend a human-readable message (convention: every not-ok
@@ -133,8 +151,9 @@ if [ "$NCCL_TEST" = "allreduce" ]; then
     --argjson floor "$NCCL_ALLREDUCE_FLOOR" \
     --argjson per_run "$per_run_busbw" \
     --argjson pass_floor "$pass_floor" \
+    --arg msg "$floor_msg" \
     '{ mean_busbw_8g_GBps: $mean_busbw_8g_GBps, floor_GBps: $floor, per_run_busbw_8g_GBps: $per_run }
-     | if $pass_floor then . else { message: "NCCL allreduce mean busbw@8GB is \($mean_busbw_8g_GBps) GB/s (per run: \($per_run)), below the \($floor) GB/s floor" } + . end')"
+     | if $pass_floor then . else { message: $msg } + . end')"
 
   # NVLink transport pass/fail point.
   # Pass requires: every rank reports full direct P2P, the NVLS multicast
@@ -176,7 +195,7 @@ if [ "$NCCL_TEST" = "allreduce" ]; then
     ]')"
 
   emit_tests_json "$OUT_JSON" "$tests"
-  log "ok (mean busbw@8GB=$busbw_8g floor=$NCCL_ALLREDUCE_FLOOR per_run=$per_run_busbw)"
+  log "ok (mean busbw@8GB=$busbw_8g floor=$NCCL_ALLREDUCE_FLOOR per_run=$per_run_busbw pass=$pass_floor)"
 
 else
   # alltoall: single perf run, pass = exit 0 (no SKU floor per plan).

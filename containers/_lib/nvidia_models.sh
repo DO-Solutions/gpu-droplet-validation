@@ -15,6 +15,10 @@ case "$GPU_MODEL" in
     EXPECTED_LINKS_PER_GPU=18
     EXPECTED_LINK_SPEED="53.125 GB/s"
     NCCL_ALLREDUCE_FLOOR=810
+    # B300 SXM6 is an NVSwitch part: nvidia-fabricmanager has to reach
+    # "Completed" before CUDA will initialize on any GPU. prereqs gates on it.
+    # A SKU with no NVSwitch (no fabric block in nvidia-smi) sets this to 0.
+    REQUIRES_NVSWITCH_FABRIC=1
     # DCGM plugin selection + per-plugin duration caps.
     #
     # Per-plugin wall-clock, measured 2026-05-15 on 8x B300 SXM6 AC
@@ -50,5 +54,5 @@ case "$GPU_MODEL" in
 esac
 
 export EXPECTED_GPU_MODEL_REGEX EXPECTED_MEM_MIB EXPECTED_LINKS_PER_GPU \
-       EXPECTED_LINK_SPEED NCCL_ALLREDUCE_FLOOR \
+       EXPECTED_LINK_SPEED NCCL_ALLREDUCE_FLOOR REQUIRES_NVSWITCH_FABRIC \
        DCGM_DIAG_TESTS DCGM_DIAG_PARAMS

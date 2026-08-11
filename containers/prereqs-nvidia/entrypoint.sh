@@ -54,23 +54,72 @@ else
   mark_fail
 fi
 
-# 3. fabricmanager state (per nvidia-smi -q "Fabric").
-fabric_state="$(nvidia-smi -q 2>/dev/null | awk -F': ' '/^[[:space:]]*State[[:space:]]*:/ && seen {print $2; exit} /Fabric/ {seen=1}' | tr -d '[:space:]')"
-case "$fabric_state" in
-  Completed|InProgress)
-    add_test true "nvidia-fabricmanager state ($fabric_state)"
-    ;;
-  "")
-    # Not all SKUs report a fabric block; treat absence as pass on non-NVSwitch boxes.
-    add_test true "nvidia-fabricmanager state (n/a on this SKU)"
-    ;;
-  *)
-    add_test false "nvidia-fabricmanager state ($fabric_state)" \
-      "fabricmanager state is '$fabric_state', expected Completed or InProgress" \
-      "$(jq -n --arg s "$fabric_state" '{state: $s, expected: ["Completed","InProgress"]}')"
+# 3. NVSwitch fabric state (nvidia-fabricmanager).
+#
+# Only "Completed" counts. "In Progress" used to pass here so a fabricmanager
+# still initializing when the suite starts wouldn't fail the run — but that
+# also let through a host whose fabricmanager never started at all, because
+# the state then sits at "In Progress" forever. That is exactly the B300 case
+# where the service dies waiting on /sys/class/infiniband: prereqs passed, and
+# the failure only surfaced 30 minutes later as NCCL "system not yet
+# initialized", which killed the stack before it could report anything.
+#
+# Wait out the legitimate race instead of accepting its symptom: poll until
+# every GPU reports Completed, then fail once the window expires.
+FABRIC_READY_TIMEOUT="${FABRIC_READY_TIMEOUT:-60}"
+
+# One fabric state per GPU, one per line, whitespace-trimmed.
+fabric_states() {
+  local out
+  out="$(nvidia-smi --query-gpu=fabric.state --format=csv,noheader 2>/dev/null)" || out=""
+  if [ -n "$out" ] && ! printf '%s\n' "$out" | grep -q '\[Not Supported\]'; then
+    printf '%s\n' "$out" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+    return 0
+  fi
+  # Drivers without the fabric.state query field: parse the per-GPU "Fabric"
+  # block out of the long-form dump. Match the section header as a bare
+  # "Fabric" line so the earlier "GPU Fabric GUID" field doesn't trip it.
+  nvidia-smi -q 2>/dev/null | awk '
+    /^[[:space:]]*Fabric[[:space:]]*$/ { in_fabric = 1; next }
+    in_fabric && /^[[:space:]]*State[[:space:]]*:/ {
+      sub(/^[^:]*:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print; in_fabric = 0
+    }'
+}
+
+# Distinct states seen, comma-separated — what the diagnostic reports.
+fabric_summary() { fabric_states | sort -u | tr '\n' ',' | sed 's/,$//'; }
+
+# True only when at least one GPU reported and every GPU says Completed.
+fabric_all_completed() {
+  local states
+  states="$(fabric_states)"
+  [ -n "$states" ] || return 1
+  ! printf '%s\n' "$states" | grep -qv '^Completed$'
+}
+
+if [ "${REQUIRES_NVSWITCH_FABRIC:-0}" = "1" ]; then
+  fabric_ok=0
+  fabric_deadline=$(( $(date +%s) + FABRIC_READY_TIMEOUT ))
+  while :; do
+    if fabric_all_completed; then fabric_ok=1; break; fi
+    [ "$(date +%s)" -lt "$fabric_deadline" ] || break
+    log "fabric state not Completed yet ($(fabric_summary || true)); waiting"
+    sleep 5
+  done
+  fabric_seen="$(fabric_summary || true)"
+  if [ "$fabric_ok" = 1 ]; then
+    add_test true "nvidia-fabricmanager fabric state == Completed on all GPUs"
+  else
+    add_test false "nvidia-fabricmanager fabric state == Completed on all GPUs" \
+      "fabric state is '${fabric_seen:-<none>}' after ${FABRIC_READY_TIMEOUT}s, expected Completed on every GPU — nvidia-fabricmanager is not running or never finished; collectives will fail with 'system not yet initialized'" \
+      "$(jq -n --arg s "${fabric_seen:-}" --argjson t "$FABRIC_READY_TIMEOUT" \
+         '{states_seen: $s, expected: "Completed", waited_seconds: $t}')"
     mark_fail
-    ;;
-esac
+  fi
+else
+  # Non-NVSwitch SKU: there is no fabric to initialize.
+  add_test true "nvidia-fabricmanager fabric state (n/a on this SKU)"
+fi
 
 # 4. GPU count.
 seen_count=0
